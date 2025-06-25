@@ -1,0 +1,4 @@
+echo "__pycache__/" >> .gitignore
+echo "*.pyc" >> .gitignore
+echo "*.log" >> .gitignore
+# Add more if needed (e.g., virtualenv folders, IDE files)
