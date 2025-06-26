@@ -10,8 +10,6 @@ from Tool3 import run_tool3
 from Tool4 import run_tool4
 
 
-
-
 # === App Config ===
 st.set_page_config(page_title="🔐 Login & Tool Suite", layout="wide")
 
