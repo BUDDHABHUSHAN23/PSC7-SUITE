@@ -3,12 +3,19 @@ import base64
 import json
 from datetime import datetime, timedelta
 import os
-from license_gate import get_machine_id, validate_license_file  # You will create this]
+from license_gate import validate_license_file, get_machine_id
 from Tool1 import run_tool1
 from Tool2 import run_tool2
 from Tool3 import run_tool3
 from Tool4 import run_tool4
 
+# === Tool Runner Mapping ===
+TOOL_RUNNERS = {
+    "Tool1": run_tool1,
+    "Tool2": run_tool2,
+    "Tool3": run_tool3,
+    "Tool4": run_tool4
+}
 
 # === App Config ===
 st.set_page_config(page_title="🔐 Login & Tool Suite", layout="wide")
@@ -20,16 +27,24 @@ USER_CREDENTIALS = {
 }
 
 # === Session Init ===
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'username' not in st.session_state:
-    st.session_state.username = ""
-if 'license_valid' not in st.session_state:
-    st.session_state.license_valid = False
-if 'license_features' not in st.session_state:
-    st.session_state.license_features = []
-if 'selected_tool' not in st.session_state:
-    st.session_state.selected_tool = ""
+def init_state():
+    default_keys = {
+        'logged_in': False,
+        'username': "",
+        'license_valid': False,
+        'license_features': [],
+        'license_expiry': "",
+        'selected_tool': "",
+        'tool1_data': None,
+        'tool2_data': None,
+        'tool3_data': None,
+        'tool4_data': None
+    }
+    for k, v in default_keys.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+init_state()
 
 # === Logo Loader ===
 def get_base64_image(image_path):
@@ -68,20 +83,18 @@ if not st.session_state.logged_in:
             st.rerun()
         else:
             st.error("Invalid username or password!")
-        
 
 # === After Login ===
 else:
-    # --- Logout button for both admin and user ---
     if st.button("🔓 Logout"):
-        st.session_state.logged_in = False
-        st.session_state.username = ""
-        st.session_state.selected_tool = ""
-        st.success("🔒 Logged out successfully!")
+        for key in ['logged_in', 'username', 'license_valid', 'license_features', 'license_expiry', 'selected_tool']:
+            st.session_state[key] = False if isinstance(st.session_state[key], bool) else ""
+
         st.rerun()
 
+    # === Admin (License Generator) ===
     if st.session_state.username == "CONSULTA":
-        # === Admin License Generator ===
+        st.title("🔧 Admin Dashboard")
         st.subheader("🔧 Admin License Generator")
 
         expiry_days = st.number_input("📅 Expiry Days", min_value=1, max_value=9999, value=365)
@@ -99,28 +112,41 @@ else:
             st.download_button("📥 Download License", data=license_json, file_name="activation_key.json", mime="application/json")
             st.code(license_json, language="json")
 
+    # === Non-Admin (Tool Access) ===
     else:
-        # === Normal User ===
         if not st.session_state.license_valid:
             st.warning("⚠️ License not activated or expired. Please upload your activation key.")
             uploaded_file = st.file_uploader("Upload Activation Key JSON", type="json")
             if uploaded_file is not None:
                 try:
                     license_data = json.load(uploaded_file)
-                    valid, features_or_msg = validate_license_file(license_data)
+                    valid, result = validate_license_file(license_data)
                     if valid:
                         st.session_state.license_valid = True
-                        st.session_state.license_features = features_or_msg
+                        st.session_state.license_features = result["features"]
+                        st.session_state.license_expiry = result["valid_till"]
                         st.success("✅ License activated successfully!")
                         st.rerun()
                     else:
-                        st.error(f"❌ License invalid: {features_or_msg}")
+                        st.error(f"❌ License invalid: {result}")
                 except Exception as e:
                     st.error(f"Error loading license file: {e}")
         else:
-            st.success(f"👋 Welcome, {st.session_state.username}")
-            st.markdown("### 🛠 Select a Tool")
+            st.subheader(f"👋 Welcome, {st.session_state.username}")
 
+            # Show license expiry info
+            if st.session_state.license_expiry:
+                expiry_date = datetime.strptime(st.session_state.license_expiry, "%Y-%m-%d")
+                days_left = (expiry_date - datetime.now()).days
+                st.info(f"🔒 License valid till: {expiry_date.strftime('%d %b %Y')}")
+                if days_left <= 7:
+                    st.warning(f"⚠️ License expires in {days_left} day(s). Please renew.")
+                if expiry_date < datetime.now():
+                    st.session_state.license_valid = False
+                    st.error("❌ License has expired.")
+                    st.rerun()
+
+            st.markdown("### 🛠 Select a Tool")
             all_tools = {
                 "📁 Single File Filter": "Tool1",
                 "📂 Dual File Filter": "Tool2",
@@ -137,24 +163,18 @@ else:
                 for idx, (tool_name, tool_key) in enumerate(allowed_tools.items()):
                     with cols[idx]:
                         if st.button(tool_name, key=tool_key):
-                            st.session_state.selected_tool = tool_name
+                            st.session_state.selected_tool = tool_key
                             st.rerun()
 
             if st.session_state.selected_tool:
-                st.markdown(f"### 🚀 Running: **{st.session_state.selected_tool}**")
-                tool_key = allowed_tools.get(st.session_state.selected_tool)
-                if tool_key == "Tool1":
-                    from Tool1 import run_tool1
-                    run_tool1()
-                elif tool_key == "Tool2":
-                    from Tool2 import run_tool2
-                    run_tool2()
-                elif tool_key == "Tool3":
-                    from Tool3 import run_tool3
-                    run_tool3()
-                elif tool_key == "Tool4":
-                    from Tool4 import run_tool4
-                    run_tool4()
+                tool_display_name = [name for name, key in allowed_tools.items() if key == st.session_state.selected_tool]
+                if tool_display_name:
+                    st.markdown(f"### 🚀 Running: **{tool_display_name[0]}**")
+
+                TOOL_RUNNERS.get(
+                    st.session_state.selected_tool,
+                    lambda: st.error("❌ Tool not found or not enabled.")
+                )()
 
 # === Footer ===
 st.markdown(
@@ -179,3 +199,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+# === End of App ===
