@@ -54,6 +54,36 @@ def get_base64_image(image_path):
 logo_path = os.path.join("assets", "consulta_logo.png")
 logo_base64 = get_base64_image(logo_path)
 
+# === Sidebar Info ===
+with st.sidebar:
+    if st.session_state.logged_in:
+        st.markdown(f"👋 **Welcome, {st.session_state.username}**")
+        
+        # License info
+        if st.session_state.license_valid and st.session_state.license_expiry:
+            expiry_date = datetime.strptime(st.session_state.license_expiry, "%Y-%m-%d")
+            days_left = (expiry_date - datetime.now()).days
+            st.markdown("### 📅 License Status")
+            st.info(f"🔒 Valid till: {expiry_date.strftime('%d %b %Y')}")
+            if days_left <= 7:
+                st.warning(f"⚠️ Expires in {days_left} day(s)")
+
+        # Logout
+        if st.button("🔓 Logout"):
+            for key in ['logged_in', 'username', 'license_valid', 'license_features', 'license_expiry', 'selected_tool']:
+                st.session_state[key] = False if isinstance(st.session_state[key], bool) else ""
+            st.rerun()
+
+        # User Manual Download
+        with open("assets/PCS7 UserManual.pdf", "rb") as pdf_file:
+            pdf_base64 = base64.b64encode(pdf_file.read()).decode()
+
+        st.markdown(f"""
+            <a href="data:application/pdf;base64,{pdf_base64}" download="PCS7_TurboSift_User_Manual.pdf" target="_blank" style="text-decoration:none;">
+                <button style='padding:10px 16px; font-weight:bold;'>📘 Download User Manual</button>
+            </a>
+        """, unsafe_allow_html=True)
+
 # === Header ===
 st.markdown(
     f"""
@@ -86,13 +116,6 @@ if not st.session_state.logged_in:
 
 # === After Login ===
 else:
-    if st.button("🔓 Logout"):
-        for key in ['logged_in', 'username', 'license_valid', 'license_features', 'license_expiry', 'selected_tool']:
-            st.session_state[key] = False if isinstance(st.session_state[key], bool) else ""
-
-        st.rerun()
-
-    # === Admin (License Generator) ===
     if st.session_state.username == "CONSULTA":
         st.title("🔧 Admin Dashboard")
         st.subheader("🔧 Admin License Generator")
@@ -112,7 +135,6 @@ else:
             st.download_button("📥 Download License", data=license_json, file_name="activation_key.json", mime="application/json")
             st.code(license_json, language="json")
 
-    # === Non-Admin (Tool Access) ===
     else:
         if not st.session_state.license_valid:
             st.warning("⚠️ License not activated or expired. Please upload your activation key.")
@@ -132,21 +154,7 @@ else:
                 except Exception as e:
                     st.error(f"Error loading license file: {e}")
         else:
-            st.subheader(f"👋 Welcome, {st.session_state.username}")
-
-            # Show license expiry info
-            if st.session_state.license_expiry:
-                expiry_date = datetime.strptime(st.session_state.license_expiry, "%Y-%m-%d")
-                days_left = (expiry_date - datetime.now()).days
-                st.info(f"🔒 License valid till: {expiry_date.strftime('%d %b %Y')}")
-                if days_left <= 7:
-                    st.warning(f"⚠️ License expires in {days_left} day(s). Please renew.")
-                if expiry_date < datetime.now():
-                    st.session_state.license_valid = False
-                    st.error("❌ License has expired.")
-                    st.rerun()
-
-            st.markdown("### 🛠 Select a Tool")
+            st.subheader("🛠 Select a Tool")
             all_tools = {
                 "📁 Single File Filter": "Tool1",
                 "📂 Dual File Filter": "Tool2",
@@ -199,4 +207,3 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-# === End of App ===
