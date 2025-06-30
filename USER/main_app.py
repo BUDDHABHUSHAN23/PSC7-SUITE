@@ -3,11 +3,23 @@ import base64
 import json
 from datetime import datetime, timedelta
 import os
+import sys
+
 from license_gate import validate_license_file, get_machine_id
 from Tool1 import run_tool1
 from Tool2 import run_tool2
 from Tool3 import run_tool3
 from Tool4 import run_tool4
+
+# === PyInstaller Resource Path Fix ===
+def resource_path(relative_path):
+    """Get absolute path to resource (works for dev and PyInstaller EXE)"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 # === Tool Runner Mapping ===
 TOOL_RUNNERS = {
@@ -51,14 +63,14 @@ def get_base64_image(image_path):
     with open(image_path, "rb") as img_file:
         return base64.b64encode(img_file.read()).decode()
 
-logo_path = os.path.join("assets", "consulta_logo.png")
+logo_path = resource_path(os.path.join("USER", "assets", "consulta_logo.png"))
 logo_base64 = get_base64_image(logo_path)
 
 # === Sidebar Info ===
 with st.sidebar:
     if st.session_state.logged_in:
         st.markdown(f"👋 **Welcome, {st.session_state.username}**")
-        
+
         # License info
         if st.session_state.license_valid and st.session_state.license_expiry:
             expiry_date = datetime.strptime(st.session_state.license_expiry, "%Y-%m-%d")
@@ -75,7 +87,8 @@ with st.sidebar:
             st.rerun()
 
         # User Manual Download
-        with open("assets/PCS7 UserManual.pdf", "rb") as pdf_file:
+        user_manual_path = resource_path(os.path.join("USER", "assets", "PCS7 UserManual.pdf"))
+        with open(user_manual_path, "rb") as pdf_file:
             pdf_base64 = base64.b64encode(pdf_file.read()).decode()
 
         st.markdown(f"""
