@@ -1,0 +1,8 @@
+PyQt5==5.15.9
+pandas==2.1.4          # 2.0.3 might not work reliably on 3.13
+openpyxl==3.1.2
+XlsxWriter==3.1.2
+python-dateutil==2.8.2
+pyinstaller==6.14.1
+pylint==3.1.0          # Compatible with Python 3.13
+pytest==8.2.2          # Compatible with Python 3.13
