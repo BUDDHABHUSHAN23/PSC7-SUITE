@@ -1,12 +1,122 @@
 import sys
 import json
 from datetime import datetime, timedelta
+<<<<<<< HEAD
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout, QLineEdit,
     QPushButton, QCheckBox, QFileDialog, QMessageBox, QComboBox,
     QHBoxLayout, QStackedWidget, QTextEdit, QListWidget, QSplitter, 
     QListWidgetItem, QAbstractItemView, QFrame, QSpacerItem, QSizePolicy
+=======
+import os
+import sys
+
+from license_gate import validate_license_file, get_machine_id
+from Tool1 import run_tool1
+from Tool2 import run_tool2
+from Tool3 import run_tool3
+from Tool4 import run_tool4
+
+# === PyInstaller Resource Path Fix ===
+def resource_path(relative_path):
+    """Get absolute path to resource (works for dev and PyInstaller EXE)"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+# === Tool Runner Mapping ===
+TOOL_RUNNERS = {
+    "Tool1": run_tool1,
+    "Tool2": run_tool2,
+    "Tool3": run_tool3,
+    "Tool4": run_tool4
+}
+
+# === App Config ===
+st.set_page_config(page_title="🔐 Login & Tool Suite", layout="wide")
+
+# === User DB ===
+USER_CREDENTIALS = {
+    "CONSULTA": "Consulta@123",
+    "DEMO": "Demo@123"
+}
+
+# === Session Init ===
+def init_state():
+    default_keys = {
+        'logged_in': False,
+        'username': "",
+        'license_valid': False,
+        'license_features': [],
+        'license_expiry': "",
+        'selected_tool': "",
+        'tool1_data': None,
+        'tool2_data': None,
+        'tool3_data': None,
+        'tool4_data': None
+    }
+    for k, v in default_keys.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+init_state()
+
+# === Logo Loader ===
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
+logo_path = resource_path(os.path.join("USER", "assets", "consulta_logo.png"))
+logo_base64 = get_base64_image(logo_path)
+
+# === Sidebar Info ===
+with st.sidebar:
+    if st.session_state.logged_in:
+        st.markdown(f"👋 **Welcome, {st.session_state.username}**")
+
+        # License info
+        if st.session_state.license_valid and st.session_state.license_expiry:
+            expiry_date = datetime.strptime(st.session_state.license_expiry, "%Y-%m-%d")
+            days_left = (expiry_date - datetime.now()).days
+            st.markdown("### 📅 License Status")
+            st.info(f"🔒 Valid till: {expiry_date.strftime('%d %b %Y')}")
+            if days_left <= 7:
+                st.warning(f"⚠️ Expires in {days_left} day(s)")
+
+        # Logout
+        if st.button("🔓 Logout"):
+            for key in ['logged_in', 'username', 'license_valid', 'license_features', 'license_expiry', 'selected_tool']:
+                st.session_state[key] = False if isinstance(st.session_state[key], bool) else ""
+            st.rerun()
+
+        # User Manual Download
+        user_manual_path = resource_path(os.path.join("USER", "assets", "PCS7 UserManual.pdf"))
+        with open(user_manual_path, "rb") as pdf_file:
+            pdf_base64 = base64.b64encode(pdf_file.read()).decode()
+
+        st.markdown(f"""
+            <a href="data:application/pdf;base64,{pdf_base64}" download="PCS7_TurboSift_User_Manual.pdf" target="_blank" style="text-decoration:none;">
+                <button style='padding:10px 16px; font-weight:bold;'>📘 Download User Manual</button>
+            </a>
+        """, unsafe_allow_html=True)
+
+# === Header ===
+st.markdown(
+    f"""
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 30px;">
+        <a href="https://www.consulta.in/" target="_blank">
+            <img src="data:image/png;base64,{logo_base64}" alt="Consulta Logo" height="50">
+        </a>
+        <h1 style="margin: 0; font-size: 2rem; color: #333;">PCS7 TurboSift</h1>
+    </div>
+    <hr>
+    """,
+    unsafe_allow_html=True
+>>>>>>> e2c95af25f92ae7b4cdbb9b1c8ae555f9efa970a
 )
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QPixmap, QFont, QPalette, QColor
@@ -514,6 +624,7 @@ class MainApp(QMainWindow):
         logo.setAlignment(Qt.AlignCenter)
         layout.addWidget(logo)
 
+<<<<<<< HEAD
         # Footer with copyright
         footer = QLabel(
             '<a href="https://www.consulta.in/" style="color: #7f8c8d; text-decoration: none;">© 2025 Consulta. All Rights Reserved.</a>'
@@ -535,3 +646,28 @@ if __name__ == "__main__":
     win.show()
     
     sys.exit(app.exec_())
+=======
+# === Footer ===
+st.markdown(
+    """
+    <style>
+    .footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        text-align: center;
+        padding: 10px;
+        font-size: 0.9rem;
+        background-color: white;
+        z-index: 100;
+        border-top: 1px solid #eee;
+    }
+    </style>
+    <div class="footer">
+        © 2016 All Rights Reserved CONSULTA TECHNOLOGIES PVT LTD.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+>>>>>>> e2c95af25f92ae7b4cdbb9b1c8ae555f9efa970a
