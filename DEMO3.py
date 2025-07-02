@@ -690,9 +690,6 @@ class MainWindow(QMainWindow):
         # Available tools with complete descriptions
         self.TOOL_RUNNERS = {
             "CSV/Excel Filter": CSVExcelFilterTool,
-            "Dual Excel Filter": DualExcelFilterTool,
-            "Excel Comparator": ExcelComparatorTool,
-            "Partial Match Finder": PartialMatchTool
         }
         
         self.TOOL_DESCRIPTIONS = {
@@ -948,7 +945,10 @@ class MainWindow(QMainWindow):
                 self.stacked_widget.addWidget(tool_page)
             except Exception as e:
                 print(f"Failed to initialize tool {tool_name}: {str(e)}")
-
+            # Provide user feedback about the failure
+            QMessageBox.warning(self, "Tool Error", 
+                              f"Could not initialize {tool_name}: {str(e)}")
+            
     def toggle_password_visibility(self, state):
         """Toggle password field visibility"""
         if state == Qt.Checked:
