@@ -24,6 +24,12 @@ from tools.tool3_ui import Tool3UI
 from tools.tool4_ui import Tool4UI
 
 
+def resource_path(relative_path):
+    """ Get path to resource whether in development or PyInstaller bundle """
+    base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+    return os.path.join(base_path, relative_path)
+
+
 class LoginWidget(QWidget):
     def __init__(self, parent):
         super().__init__()
@@ -110,7 +116,8 @@ class MainApp(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         
         # Set window icon
-        self.setWindowIcon(QIcon("assets/icon.png"))
+        self.setWindowIcon(QIcon(resource_path("assets/LOGO.ico")))
+
         
         # Set style
         self.setStyleSheet("""
@@ -181,7 +188,7 @@ class MainApp(QMainWindow):
         ]
         
         for text, icon_path in items:
-            item = QListWidgetItem(QIcon(icon_path), text)
+            item = QListWidgetItem(QIcon(resource_path(icon_path)), text)
             self.sidebar.addItem(item)
         
         self.sidebar.currentItemChanged.connect(self.handle_sidebar_selection)
@@ -303,12 +310,13 @@ class MainApp(QMainWindow):
         self.animated_set_current_widget(self.admin_panel)
 
     def show_user_manual_panel(self):
-        pdf_path = os.path.abspath("assets/user_manual.pdf")
-        if os.path.exists(pdf_path):
-            import webbrowser
-            webbrowser.open(pdf_path)
-        else:
-            QMessageBox.critical(self, "Error", "User manual PDF not found.")
+            pdf_path = resource_path("assets/user_manual.pdf")
+            if os.path.exists(pdf_path):
+                import webbrowser
+                webbrowser.open(pdf_path)
+            else:
+                QMessageBox.critical(self, "Error", "User manual PDF not found.")
+
 
 
     def generate_license(self):
@@ -475,7 +483,7 @@ class MainApp(QMainWindow):
                 btn_layout.setSpacing(10)
                 
                 icon = QLabel()
-                pixmap = QPixmap(icon_path).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pixmap = QPixmap(resource_path(icon_path)).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 icon.setPixmap(pixmap)
                 icon.setAlignment(Qt.AlignCenter)
                 
@@ -560,7 +568,7 @@ class MainApp(QMainWindow):
         
         # Add logo
         logo = QLabel()
-        logo_pix = QPixmap("assets/consulta_logo.png").scaledToHeight(60, Qt.SmoothTransformation)
+        logo_pix = QPixmap(resource_path("assets/consulta_logo.png")).scaledToHeight(60, Qt.SmoothTransformation)
         logo.setPixmap(logo_pix)
         logo.setAlignment(Qt.AlignCenter)
         layout.addWidget(logo)
