@@ -76,7 +76,14 @@ class Tool4UI(QWidget):
         self.table = QTableWidget()
         layout.addWidget(self.table)
 
+        # Export button
+        self.export_btn = QPushButton("📥 Export Matched Results to CSV")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self.export_to_csv)
+        layout.addWidget(self.export_btn)
+
         self.setLayout(layout)
+
 
     def load_file1(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Excel File 1", "", "Excel (*.xlsx)")
@@ -177,10 +184,13 @@ class Tool4UI(QWidget):
             self.matched_df = result_df
             QMessageBox.information(self, "Success", f"Found {len(result_df)} matches.")
             self.show_preview(result_df)
+            self.export_btn.setEnabled(True)  # ✅ Enable export
         else:
             QMessageBox.warning(self, "No Matches", "No partial matches found.")
             self.matched_df = pd.DataFrame()
             self.show_preview(pd.DataFrame())
+            self.export_btn.setEnabled(False)  # 🔒 Disable export if no data
+
 
     def show_preview(self, df):
         if df.empty:
@@ -204,3 +214,19 @@ class Tool4UI(QWidget):
                 self.table.setItem(i, j, QTableWidgetItem(str(df.iloc[i, j])))
 
         self.table.resizeColumnsToContents()
+
+    def export_to_csv(self):
+        if self.matched_df is None or self.matched_df.empty:
+            QMessageBox.warning(self, "No Data", "No matched data available to export.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "partial_matches.csv", "CSV Files (*.csv)")
+        if path:
+            try:
+                selected_cols = [item.text() for item in self.output_columns_list.selectedItems()]
+                export_df = self.matched_df[selected_cols] if selected_cols else self.matched_df
+                export_df.to_csv(path, index=False, encoding='utf-8')
+                QMessageBox.information(self, "Export Successful", f"CSV saved to:\n{path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Failed", f"Error saving CSV: {str(e)}")
+
