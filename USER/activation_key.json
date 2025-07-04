@@ -1,0 +1,11 @@
+{
+    "machine_id": "c54c990be9a78be441609c24e8c0875a84c0d858007fb95104a306dc59b92a60",
+    "issued_on": "2025-07-04 11:14:29.392576",
+    "valid_till": "2026-07-04",
+    "features": [
+        "Tool1",
+        "Tool2",
+        "Tool3",
+        "Tool4"
+    ]
+}
