@@ -9,3 +9,5 @@ echo "*.log" >> .gitignore
 .virtualenv
 USER/dist/
 USER/build/
+USER/dist/main_app.exe
+USER/build/main_app/main_app.pkg
