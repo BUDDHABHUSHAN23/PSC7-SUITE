@@ -2,3 +2,7 @@ echo "__pycache__/" >> .gitignore
 echo "*.pyc" >> .gitignore
 echo "*.log" >> .gitignore
 # Add more if needed (e.g., virtualenv folders, IDE files)
+/USER/dist/main_app.exe
+/USER/build/main_app.pkg
+/USER/dist/
+/USER/build/
