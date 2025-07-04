@@ -3,7 +3,6 @@ import json
 from datetime import datetime, timedelta
 import os
 
-
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout, QLineEdit,
     QPushButton, QCheckBox, QFileDialog, QMessageBox, QComboBox,
@@ -16,12 +15,25 @@ from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import QUrl
 
-
 from license_gate import validate_license_file, get_machine_id
 from tools.tool1_ui import Tool1UI
 from tools.tool2_ui import Tool2UI
 from tools.tool3_ui import Tool3UI
 from tools.tool4_ui import Tool4UI
+
+from security.secure_license_system import (
+    save_encrypted_license,
+    load_encrypted_license,
+    validate_license_file,
+    delete_saved_license,
+    get_valid_license_on_start
+)
+
+
+def resource_path(relative_path):
+    """ Get path to resource whether in development or PyInstaller bundle """
+    base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+    return os.path.join(base_path, relative_path)
 
 
 class LoginWidget(QWidget):
@@ -110,8 +122,8 @@ class MainApp(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         
         # Set window icon
-        self.setWindowIcon(QIcon("assets/icon.png"))
-        
+        self.setWindowIcon(QIcon(resource_path("assets/LOGO.ico")))
+
         # Set style
         self.setStyleSheet("""
             QMainWindow {
@@ -181,7 +193,7 @@ class MainApp(QMainWindow):
         ]
         
         for text, icon_path in items:
-            item = QListWidgetItem(QIcon(icon_path), text)
+            item = QListWidgetItem(QIcon(resource_path(icon_path)), text)
             self.sidebar.addItem(item)
         
         self.sidebar.currentItemChanged.connect(self.handle_sidebar_selection)
@@ -200,6 +212,16 @@ class MainApp(QMainWindow):
         self.login_widget = LoginWidget(self)
         self.stack.addWidget(self.login_widget)
         self.stack.setCurrentWidget(self.login_widget)
+
+        # Initially disable sidebar items (except Home and Logout)
+        self.update_sidebar_access()
+
+        # Try loading existing secure license
+        license_data, valid, features, expiry = get_valid_license_on_start()
+        if valid:
+            self.license_valid = True
+            self.license_features = features
+            self.license_expiry = expiry
 
     # Animation methods
     def animated_set_current_widget(self, widget):
@@ -232,6 +254,21 @@ class MainApp(QMainWindow):
         self.fade_in.start()
 
     def post_login(self):
+        # Called after successful login
+        # Load license info again on login
+        license_data, valid, features, expiry = get_valid_license_on_start()
+        if valid:
+            self.license_valid = True
+            self.license_features = features
+            self.license_expiry = expiry
+        else:
+            self.license_valid = False
+            self.license_features = []
+            self.license_expiry = ""
+
+        # Enable sidebar items after login
+        self.update_sidebar_access()
+
         if self.username == "CONSULTA":
             self.show_admin_panel()
         else:
@@ -303,13 +340,12 @@ class MainApp(QMainWindow):
         self.animated_set_current_widget(self.admin_panel)
 
     def show_user_manual_panel(self):
-        pdf_path = os.path.abspath("assets/user_manual.pdf")
+        pdf_path = resource_path("assets/user_manual.pdf")
         if os.path.exists(pdf_path):
             import webbrowser
             webbrowser.open(pdf_path)
         else:
             QMessageBox.critical(self, "Error", "User manual PDF not found.")
-
 
     def generate_license(self):
         try:
@@ -334,8 +370,9 @@ class MainApp(QMainWindow):
                 self, "Save License File", "activation_key.json", "JSON Files (*.json)"
             )
             if save_path:
+                save_encrypted_license(license_payload)  # save encrypted copy internally (in .consulta_pcs7/license)
                 with open(save_path, "w") as f:
-                    f.write(json_data)
+                    json.dump(license_payload, f, indent=4)  # save readable version only for backup if needed
                 QMessageBox.information(self, "Saved", "License file saved successfully!")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
@@ -420,13 +457,23 @@ class MainApp(QMainWindow):
             try:
                 with open(file_path, "r") as f:
                     license_data = json.load(f)
-                valid, result = validate_license_file(license_data)
+
+                # Save encrypted version internally
+                if save_encrypted_license(license_data):
+                    # Load again from secure storage and validate
+                    loaded = load_encrypted_license()
+                    valid, result = validate_license_file(loaded)
+                else:
+                    QMessageBox.critical(self, "Error", "Failed to securely save the license.")
+                    return
                 if valid:
                     self.license_valid = True
                     self.license_features = result["features"]
                     self.license_expiry = result["valid_till"]
                     QMessageBox.information(self, "Success", "License validated successfully!")
                     self.show_license_panel()
+                    # Enable sidebar access after license upload
+                    self.update_sidebar_access()
                 else:
                     QMessageBox.critical(self, "Error", f"License validation failed:\n{result}")
             except Exception as e:
@@ -475,7 +522,7 @@ class MainApp(QMainWindow):
                 btn_layout.setSpacing(10)
                 
                 icon = QLabel()
-                pixmap = QPixmap(icon_path).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pixmap = QPixmap(resource_path(icon_path)).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 icon.setPixmap(pixmap)
                 icon.setAlignment(Qt.AlignCenter)
                 
@@ -504,6 +551,20 @@ class MainApp(QMainWindow):
 
         self.animated_set_current_widget(self.tool_widgets[tool_name])
 
+    def update_sidebar_access(self):
+        # Enable only Home and Logout if not logged in
+        # Enable all if logged in
+        for i in range(self.sidebar.count()):
+            item = self.sidebar.item(i)
+            if not self.logged_in:
+                # Enable only Home and Logout
+                if item.text() in ["Home", "Logout"]:
+                    item.setFlags(item.flags() | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                else:
+                    item.setFlags(item.flags() & ~(Qt.ItemIsEnabled | Qt.ItemIsSelectable))
+            else:
+                # If logged in, enable all
+                item.setFlags(item.flags() | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
 
     def handle_sidebar_selection(self, item):
         if not item:
@@ -539,8 +600,7 @@ class MainApp(QMainWindow):
                 QMessageBox.warning(self, "Access Denied", f"You do not have access to {text} or your license has expired.")
 
         elif text == "User Manual":
-                self.show_user_manual_panel()
-
+            self.show_user_manual_panel()
 
     def logout(self):
         reply = QMessageBox.question(
@@ -549,10 +609,12 @@ class MainApp(QMainWindow):
         )
         
         if reply == QMessageBox.Yes:
-                self.logged_in = False
-                self.license_valid = False
-                self.username = ""
-                self.animated_set_current_widget(self.login_widget)
+            self.logged_in = False
+            self.license_valid = False
+            self.username = ""
+            self.tool_widgets.clear()
+            self.animated_set_current_widget(self.login_widget)
+            self.update_sidebar_access()
 
     def add_logo_and_footer(self, layout):
         # Add vertical spacer to push content up
@@ -560,7 +622,7 @@ class MainApp(QMainWindow):
         
         # Add logo
         logo = QLabel()
-        logo_pix = QPixmap("assets/consulta_logo.png").scaledToHeight(60, Qt.SmoothTransformation)
+        logo_pix = QPixmap(resource_path("assets/consulta_logo.png")).scaledToHeight(60, Qt.SmoothTransformation)
         logo.setPixmap(logo_pix)
         logo.setAlignment(Qt.AlignCenter)
         layout.addWidget(logo)
@@ -585,4 +647,4 @@ if __name__ == "__main__":
     win = MainApp()
     win.show()
     
-    sys.exit(app.exec_())
+    sys.exit(app.exec_())    still it have more where not button to detele existing licsns what if i want to chang there is no way see as user perspective abd get the point need to impove 
