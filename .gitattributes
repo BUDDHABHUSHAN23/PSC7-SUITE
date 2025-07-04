@@ -1,0 +1,2 @@
+USER/dist/main_app.exe filter=lfs diff=lfs merge=lfs -text
+USER/build/main_app/main_app.pkg filter=lfs diff=lfs merge=lfs -text
