@@ -6,3 +6,4 @@ echo "*.log" >> .gitignore
 /USER/build/main_app.pkg
 /USER/dist/
 /USER/build/
+.virtualenv
