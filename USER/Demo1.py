@@ -7,10 +7,11 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout, QLineEdit,
     QPushButton, QCheckBox, QFileDialog, QMessageBox, QComboBox,
     QHBoxLayout, QStackedWidget, QTextEdit, QListWidget, QSplitter, 
-    QListWidgetItem, QAbstractItemView, QFrame, QSpacerItem, QSizePolicy
+    QListWidgetItem, QAbstractItemView, QFrame, QSpacerItem, QSizePolicy,
+    QDialog, QDialogButtonBox, QGridLayout
 )
 from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QIcon, QPixmap, QFont
+from PyQt5.QtGui import QIcon, QPixmap, QFont, QColor
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import QUrl
@@ -34,6 +35,202 @@ def resource_path(relative_path):
     """ Get path to resource whether in development or PyInstaller bundle """
     base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
     return os.path.join(base_path, relative_path)
+
+
+class LicenseDetailsDialog(QDialog):
+    def __init__(self, license_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("License Details")
+        self.setWindowIcon(QIcon(resource_path("assets/info.png")))
+        self.resize(500, 300)
+        
+        layout = QVBoxLayout()
+        
+        # Header
+        header = QLabel("Current License Information")
+        header.setFont(QFont('Arial', 14, QFont.Bold))
+        layout.addWidget(header)
+        
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+        
+        # License details grid
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        
+        details = [
+            ("Issued On:", license_data.get("issued_on", "N/A")),
+            ("Valid Until:", license_data.get("valid_till", "N/A")),
+            ("Enabled Features:", ", ".join(license_data.get("features", []))),
+            ("License Type:", "Full" if len(license_data.get("features", [])) == 4 else "Partial")
+        ]
+        
+        for row, (label, value) in enumerate(details):
+            lbl = QLabel(label)
+            lbl.setFont(QFont('Arial', 10, QFont.Bold))
+            val = QLabel(value)
+            val.setFont(QFont('Arial', 10))
+            grid.addWidget(lbl, row, 0)
+            grid.addWidget(val, row, 1)
+        
+        layout.addLayout(grid)
+        
+        # Warning if license is near expiry
+        expiry_date = license_data.get("valid_till")
+        if expiry_date:
+            try:
+                expiry = datetime.strptime(expiry_date, "%Y-%m-%d")
+                days_left = (expiry - datetime.now()).days
+                if days_left <= 7:
+                    warning = QLabel(f"⚠️ License expires in {days_left} day(s)!")
+                    warning.setStyleSheet("color: #e74c3c; font-weight: bold;")
+                    layout.addWidget(warning)
+            except ValueError:
+                pass
+        
+        # Buttons
+        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
+        btn_box.rejected.connect(self.close)
+        layout.addWidget(btn_box)
+        self.setLayout(layout)
+
+
+class LicenseManagementDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("License Management")
+        self.setWindowIcon(QIcon(resource_path("assets/license.png")))
+        self.resize(500, 300)
+        
+        layout = QVBoxLayout()
+        
+        # Header
+        header = QLabel("License Management")
+        header.setFont(QFont('Arial', 14, QFont.Bold))
+        layout.addWidget(header)
+        
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+        
+        # Current license status
+        self.status_label = QLabel()
+        self.status_label.setFont(QFont('Arial', 10))
+        layout.addWidget(self.status_label)
+        
+        # Initialize buttons first
+        self.view_btn = QPushButton("View Details")
+        self.view_btn.setIcon(QIcon(resource_path("assets/info.png")))
+        self.view_btn.clicked.connect(self.view_license_details)
+        
+        self.upload_btn = QPushButton("Upload New")
+        self.upload_btn.setIcon(QIcon(resource_path("assets/upload.png")))
+        self.upload_btn.clicked.connect(self.upload_license)
+        
+        self.delete_btn = QPushButton("Remove License")
+        self.delete_btn.setIcon(QIcon(resource_path("assets/delete.png")))
+        self.delete_btn.clicked.connect(self.delete_license)
+        self.delete_btn.setStyleSheet("background-color: #e74c3c; color: white;")
+        
+        # Action buttons layout
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.view_btn)
+        btn_layout.addWidget(self.upload_btn)
+        btn_layout.addWidget(self.delete_btn)
+        layout.addLayout(btn_layout)
+        
+        # Close button
+        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
+        btn_box.rejected.connect(self.close)
+        layout.addWidget(btn_box)
+        
+        self.setLayout(layout)
+        
+        # Now update status which will use the buttons
+        self.update_status()
+    
+    def update_status(self):
+        license_data = load_encrypted_license()
+        if license_data:
+            expiry_date = license_data.get("valid_till", "N/A")
+            features = license_data.get("features", [])
+            self.status_label.setText(
+                f"Current License: {len(features)} tools enabled\n"
+                f"Valid until: {expiry_date}"
+            )
+            self.delete_btn.setEnabled(True)
+            self.view_btn.setEnabled(True)
+        else:
+            self.status_label.setText("No active license found")
+            self.delete_btn.setEnabled(False)
+            self.view_btn.setEnabled(False)
+    
+    def view_license_details(self):
+        license_data = load_encrypted_license()
+        if license_data:
+            dialog = LicenseDetailsDialog(license_data, self)
+            dialog.exec_()
+    
+    def upload_license(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Select License File", 
+            "", 
+            "JSON Files (*.json)"
+        )
+        if file_path:
+            try:
+                with open(file_path, "r") as f:
+                    license_data = json.load(f)
+                
+                # Validate before saving
+                valid, result = validate_license_file(license_data)
+                if not valid:
+                    QMessageBox.critical(self, "Invalid License", result)
+                    return
+                
+                # Confirm license change
+                reply = QMessageBox.question(
+                    self, 'Confirm License Change',
+                    'Are you sure you want to replace your current license?',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    if save_encrypted_license(license_data):
+                        QMessageBox.information(self, "Success", "License updated successfully!")
+                        self.parent().license_updated()
+                        self.update_status()
+                    else:
+                        QMessageBox.critical(self, "Error", "Failed to save license.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to process license file:\n{str(e)}")
+    
+    def delete_license(self):
+        license_data = load_encrypted_license()
+        if not license_data:
+            return
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, 'Confirm License Removal',
+            'Are you sure you want to remove your current license?\n'
+            'This will disable all premium features.',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            if delete_saved_license():
+                QMessageBox.information(self, "Success", "License removed successfully!")
+                self.parent().license_updated()
+                self.update_status()
+            else:
+                QMessageBox.critical(self, "Error", "Failed to remove license.")
 
 
 class LoginWidget(QWidget):
@@ -120,11 +317,7 @@ class MainApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("PCS7 TurboSift")
         self.setGeometry(100, 100, 1200, 800)
-        
-        # Set window icon
         self.setWindowIcon(QIcon(resource_path("assets/LOGO.ico")))
-
-        # Set style
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f5f5f5;
@@ -170,7 +363,6 @@ class MainApp(QMainWindow):
         self.license_valid = False
         self.license_features = []
         self.license_expiry = ""
-
         self.tool_widgets = {}
 
         # Main stacked widget
@@ -223,49 +415,10 @@ class MainApp(QMainWindow):
             self.license_features = features
             self.license_expiry = expiry
 
-    # Animation methods
-    def animated_set_current_widget(self, widget):
-        """Smooth fade out current widget, then fade in the new one."""
-        current_widget = self.stack.currentWidget()
-        if current_widget is widget:
-            return
-
-        # Fade out animation for current widget
-        self.fade_out = QPropertyAnimation(current_widget, b"windowOpacity")
-        self.fade_out.setDuration(300)
-        self.fade_out.setStartValue(1)
-        self.fade_out.setEndValue(0)
-        self.fade_out.setEasingCurve(QEasingCurve.InOutQuad)
-        
-        # When fade out finishes, switch widget and fade in new widget
-        self.fade_out.finished.connect(lambda: self._fade_in_new_widget(widget))
-        
-        self.fade_out.start()
-
-    def _fade_in_new_widget(self, widget):
-        self.stack.setCurrentWidget(widget)
-        widget.setWindowOpacity(0)
-        
-        self.fade_in = QPropertyAnimation(widget, b"windowOpacity")
-        self.fade_in.setDuration(300)
-        self.fade_in.setStartValue(0)
-        self.fade_in.setEndValue(1)
-        self.fade_in.setEasingCurve(QEasingCurve.InOutQuad)
-        self.fade_in.start()
-
     def post_login(self):
-        # Called after successful login
-        # Load license info again on login
-        license_data, valid, features, expiry = get_valid_license_on_start()
-        if valid:
-            self.license_valid = True
-            self.license_features = features
-            self.license_expiry = expiry
-        else:
-            self.license_valid = False
-            self.license_features = []
-            self.license_expiry = ""
-
+        # Load license info
+        self.license_updated()
+        
         # Enable sidebar items after login
         self.update_sidebar_access()
 
@@ -273,6 +426,24 @@ class MainApp(QMainWindow):
             self.show_admin_panel()
         else:
             self.show_license_panel()
+    
+    def license_updated(self):
+        """Called whenever license status changes"""
+        license_data, valid, features, expiry = get_valid_license_on_start()
+        self.license_valid = valid
+        self.license_features = features
+        self.license_expiry = expiry
+        
+        # Update status bar
+        if hasattr(self, 'statusBar'):
+            self.statusBar().clearMessage()
+            if valid:
+                self.statusBar().showMessage(
+                    f"License valid until: {expiry} | "
+                    f"Enabled tools: {', '.join(features)}"
+                )
+            else:
+                self.statusBar().showMessage("⚠️ No valid license found")
 
     def show_admin_panel(self):
         self.admin_panel = QWidget()
@@ -331,13 +502,107 @@ class MainApp(QMainWindow):
 
         # Generate button
         gen_btn = QPushButton("Generate License")
-        gen_btn.setStyleSheet("background-color: #27ae60;")
+        gen_btn.setStyleSheet("background-color: #27ae60; color: white;")
         gen_btn.clicked.connect(self.generate_license)
         layout.addWidget(gen_btn, alignment=Qt.AlignRight)
 
         self.admin_panel.setLayout(layout)
         self.stack.addWidget(self.admin_panel)
         self.animated_set_current_widget(self.admin_panel)
+
+    def show_license_panel(self):
+        self.license_panel = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+
+        # Welcome message
+        welcome = QLabel(f"👋 Welcome {self.username}")
+        welcome.setFont(QFont('Arial', 16, QFont.Bold))
+        layout.addWidget(welcome)
+
+        # License management button
+        license_btn = QPushButton("Manage License")
+        license_btn.setIcon(QIcon(resource_path("assets/license.png")))
+        license_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 8px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+        """)
+        license_btn.clicked.connect(self.show_license_management)
+        layout.addWidget(license_btn, alignment=Qt.AlignLeft)
+
+        if not self.license_valid:
+            # License upload prompt
+            upload_frame = QFrame()
+            upload_frame.setFrameShape(QFrame.StyledPanel)
+            upload_frame.setStyleSheet("background-color: white; padding: 20px; border-radius: 5px;")
+            upload_layout = QVBoxLayout()
+            
+            upload_label = QLabel("Please upload your license file to continue")
+            upload_label.setFont(QFont('Arial', 12))
+            upload_layout.addWidget(upload_label, alignment=Qt.AlignCenter)
+            
+            btn = QPushButton("Upload License File")
+            btn.setFixedSize(200, 40)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #3498db;
+                    color: white;
+                    font-size: 14px;
+                    padding: 10px 20px;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #2980b9;
+                }
+            """)
+            btn.clicked.connect(self.show_license_management)
+            upload_layout.addWidget(btn, alignment=Qt.AlignCenter)
+            
+            upload_frame.setLayout(upload_layout)
+            layout.addWidget(upload_frame)
+        else:
+            # License info section
+            info_frame = QFrame()
+            info_frame.setFrameShape(QFrame.StyledPanel)
+            info_frame.setStyleSheet("background-color: #e8f4f8; padding: 15px; border-radius: 5px;")
+            info_layout = QVBoxLayout()
+            
+            status = QLabel("✅ License Valid")
+            status.setFont(QFont('Arial', 12, QFont.Bold))
+            info_layout.addWidget(status)
+            
+            expiry = QLabel(f"Valid Till: {self.license_expiry}")
+            expiry.setFont(QFont('Arial', 11))
+            info_layout.addWidget(expiry)
+            
+            features = QLabel(f"Enabled Tools: {', '.join(self.license_features)}")
+            features.setFont(QFont('Arial', 11))
+            info_layout.addWidget(features)
+            
+            info_frame.setLayout(info_layout)
+            layout.addWidget(info_frame)
+            
+            # Show available tools
+            self.show_tool_buttons(layout)
+
+        # Add logo and footer
+        self.add_logo_and_footer(layout)
+
+        self.license_panel.setLayout(layout)
+        self.stack.addWidget(self.license_panel)
+        self.animated_set_current_widget(self.license_panel)
+    
+    def show_license_management(self):
+        dialog = LicenseManagementDialog(self)
+        dialog.exec_()
 
     def show_user_manual_panel(self):
         pdf_path = resource_path("assets/user_manual.pdf")
@@ -370,114 +635,12 @@ class MainApp(QMainWindow):
                 self, "Save License File", "activation_key.json", "JSON Files (*.json)"
             )
             if save_path:
-                save_encrypted_license(license_payload)  # save encrypted copy internally (in .consulta_pcs7/license)
+                save_encrypted_license(license_payload)  # save encrypted copy internally
                 with open(save_path, "w") as f:
-                    json.dump(license_payload, f, indent=4)  # save readable version only for backup if needed
+                    json.dump(license_payload, f, indent=4)  # save readable version
                 QMessageBox.information(self, "Saved", "License file saved successfully!")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
-
-    def show_license_panel(self):
-        self.license_panel = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
-
-        # Welcome message
-        welcome = QLabel(f"👋 Welcome {self.username}")
-        welcome.setFont(QFont('Arial', 16, QFont.Bold))
-        layout.addWidget(welcome)
-
-        if not self.license_valid:
-            # License upload section
-            upload_frame = QFrame()
-            upload_frame.setFrameShape(QFrame.StyledPanel)
-            upload_frame.setStyleSheet("background-color: white; padding: 20px; border-radius: 5px;")
-            upload_layout = QVBoxLayout()
-            
-            upload_label = QLabel("Please upload your license file to continue")
-            upload_label.setFont(QFont('Arial', 12))
-            upload_layout.addWidget(upload_label, alignment=Qt.AlignCenter)
-            
-            btn = QPushButton("Upload License File")
-            btn.setFixedSize(200, 40)  # Make it visible enough
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #3498db;
-                    color: white;
-                    font-size: 14px;
-                    padding: 10px 20px;
-                    border-radius: 5px;
-                }
-                QPushButton:hover {
-                    background-color: #2980b9;
-                }
-            """)
-            btn.clicked.connect(self.upload_license)
-            upload_layout.addWidget(btn, alignment=Qt.AlignCenter)
-            
-            upload_frame.setLayout(upload_layout)
-            layout.addWidget(upload_frame)
-        else:
-            # License info section
-            info_frame = QFrame()
-            info_frame.setFrameShape(QFrame.StyledPanel)
-            info_frame.setStyleSheet("background-color: #e8f4f8; padding: 15px; border-radius: 5px;")
-            info_layout = QVBoxLayout()
-            
-            status = QLabel("✅ License Valid")
-            status.setFont(QFont('Arial', 12, QFont.Bold))
-            info_layout.addWidget(status)
-            
-            expiry = QLabel(f"Valid Till: {self.license_expiry}")
-            expiry.setFont(QFont('Arial', 11))
-            info_layout.addWidget(expiry)
-            
-            info_frame.setLayout(info_layout)
-            layout.addWidget(info_frame)
-            
-            # Show available tools
-            self.show_tool_buttons(layout)
-
-        # Add logo and footer
-        self.add_logo_and_footer(layout)
-
-        self.license_panel.setLayout(layout)
-        self.stack.addWidget(self.license_panel)
-        self.animated_set_current_widget(self.license_panel)
-
-    def upload_license(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Select License File", 
-            "", 
-            "JSON Files (*.json)"
-        )
-        if file_path:
-            try:
-                with open(file_path, "r") as f:
-                    license_data = json.load(f)
-
-                # Save encrypted version internally
-                if save_encrypted_license(license_data):
-                    # Load again from secure storage and validate
-                    loaded = load_encrypted_license()
-                    valid, result = validate_license_file(loaded)
-                else:
-                    QMessageBox.critical(self, "Error", "Failed to securely save the license.")
-                    return
-                if valid:
-                    self.license_valid = True
-                    self.license_features = result["features"]
-                    self.license_expiry = result["valid_till"]
-                    QMessageBox.information(self, "Success", "License validated successfully!")
-                    self.show_license_panel()
-                    # Enable sidebar access after license upload
-                    self.update_sidebar_access()
-                else:
-                    QMessageBox.critical(self, "Error", f"License validation failed:\n{result}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to read license file:\n{str(e)}")
 
     def show_tool_buttons(self, layout):
         tool_map = {
@@ -552,18 +715,14 @@ class MainApp(QMainWindow):
         self.animated_set_current_widget(self.tool_widgets[tool_name])
 
     def update_sidebar_access(self):
-        # Enable only Home and Logout if not logged in
-        # Enable all if logged in
         for i in range(self.sidebar.count()):
             item = self.sidebar.item(i)
             if not self.logged_in:
-                # Enable only Home and Logout
                 if item.text() in ["Home", "Logout"]:
                     item.setFlags(item.flags() | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 else:
                     item.setFlags(item.flags() & ~(Qt.ItemIsEnabled | Qt.ItemIsSelectable))
             else:
-                # If logged in, enable all
                 item.setFlags(item.flags() | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
 
     def handle_sidebar_selection(self, item):
@@ -581,7 +740,6 @@ class MainApp(QMainWindow):
                 self.animated_set_current_widget(self.login_widget)  
         elif text == "Logout":
             self.logout()
-
         elif text in ["Tool1", "Tool2", "Tool3", "Tool4"]:
             if self.license_valid and text in self.license_features:
                 if text not in self.tool_widgets or self.tool_widgets[text] is None:
@@ -598,7 +756,6 @@ class MainApp(QMainWindow):
                 self.animated_set_current_widget(self.tool_widgets[text])
             else:
                 QMessageBox.warning(self, "Access Denied", f"You do not have access to {text} or your license has expired.")
-
         elif text == "User Manual":
             self.show_user_manual_panel()
 
@@ -617,7 +774,6 @@ class MainApp(QMainWindow):
             self.update_sidebar_access()
 
     def add_logo_and_footer(self, layout):
-        # Add vertical spacer to push content up
         layout.addStretch(1)
         
         # Add logo
@@ -636,15 +792,35 @@ class MainApp(QMainWindow):
         footer.setFont(QFont('Arial', 9))
         layout.addWidget(footer)
 
+    def animated_set_current_widget(self, widget):
+        current_widget = self.stack.currentWidget()
+        if current_widget is widget:
+            return
+
+        self.fade_out = QPropertyAnimation(current_widget, b"windowOpacity")
+        self.fade_out.setDuration(300)
+        self.fade_out.setStartValue(1)
+        self.fade_out.setEndValue(0)
+        self.fade_out.setEasingCurve(QEasingCurve.InOutQuad)
+        
+        self.fade_out.finished.connect(lambda: self._fade_in_new_widget(widget))
+        self.fade_out.start()
+
+    def _fade_in_new_widget(self, widget):
+        self.stack.setCurrentWidget(widget)
+        widget.setWindowOpacity(0)
+        
+        self.fade_in = QPropertyAnimation(widget, b"windowOpacity")
+        self.fade_in.setDuration(300)
+        self.fade_in.setStartValue(0)
+        self.fade_in.setEndValue(1)
+        self.fade_in.setEasingCurve(QEasingCurve.InOutQuad)
+        self.fade_in.start()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # Set application style
     app.setStyle('Fusion')
-    
-    # Create and show main window
     win = MainApp()
     win.show()
-    
-    sys.exit(app.exec_())    
+    sys.exit(app.exec_())
