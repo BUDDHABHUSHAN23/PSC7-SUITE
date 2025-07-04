@@ -7,3 +7,5 @@ echo "*.log" >> .gitignore
 /USER/dist/
 /USER/build/
 .virtualenv
+USER/dist/
+USER/build/
