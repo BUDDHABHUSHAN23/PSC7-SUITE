@@ -12,105 +12,113 @@ from PyQt5.QtGui import QFont, QIcon
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Admin Login")
+        self.setWindowTitle("🔒 Admin Login")
         self.setWindowIcon(QIcon("assets/lock.png"))
-        self.setFixedSize(300, 200)
-        
+        self.setFixedSize(320, 220)
+        self.setStyleSheet("QLineEdit { padding: 5px; font-size: 14px; }")
+
         layout = QVBoxLayout()
         
-        self.username = QLineEdit()
-        self.username.setPlaceholderText("Username")
-        self.password = QLineEdit()
-        self.password.setPlaceholderText("Password")
-        self.password.setEchoMode(QLineEdit.Password)
+        label = QLabel("Enter Admin Credentials:")
+        label.setFont(QFont('Arial', 12))
+        layout.addWidget(label)
         
+        self.username = QLineEdit()
+        self.username.setPlaceholderText("👤 Username")
+        layout.addWidget(self.username)
+        
+        self.password = QLineEdit()
+        self.password.setPlaceholderText("🔑 Password")
+        self.password.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.password)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Login")
+        buttons.button(QDialogButtonBox.Cancel).setText("Cancel")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        
-        layout.addWidget(QLabel("Admin Credentials:"))
-        layout.addWidget(self.username)
-        layout.addWidget(self.password)
         layout.addWidget(buttons)
-        
+
         self.setLayout(layout)
-    
+
     def get_credentials(self):
         return self.username.text(), self.password.text()
 
 class AdminApp(QMainWindow):
     ADMIN_CREDENTIALS = {
-        "CONSULTA": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"  # SHA-256 of "123"
+        "CONSULTA": hashlib.sha256("123".encode()).hexdigest()
     }
 
     def __init__(self):
         super().__init__()
         if not self.authenticate():
             sys.exit(1)
-            
-        self.setWindowTitle("PCS7 TurboSift - Admin Console")
-        self.setGeometry(100, 100, 800, 600)
+
+        self.setWindowTitle("🔧 PCS7 TurboSift - Admin Console")
+        self.setGeometry(200, 100, 900, 700)
         self.setWindowIcon(QIcon("assets/admin.png"))
-        self.init_ui()
+        self.setStyleSheet("""
+            QLabel { font-size: 14px; }
+            QTextEdit, QListWidget, QComboBox, QLineEdit { font-size: 13px; }
+            QPushButton { padding: 6px; font-size: 14px; background-color: #007ACC; color: white; border-radius: 4px; }
+            QPushButton:hover { background-color: #005F99; }
+        """)
         self.current_request = None
-    
+        self.init_ui()
+
     def authenticate(self):
         login = LoginDialog()
-        if login.exec_() == QDialog.Accepted:
-            username, password = login.get_credentials()
-            hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-            return username in self.ADMIN_CREDENTIALS and self.ADMIN_CREDENTIALS[username] == hashed_pw
-        return False
-    
+        return login.exec_() == QDialog.Accepted and \
+               (lambda u, p: u in self.ADMIN_CREDENTIALS and self.ADMIN_CREDENTIALS[u] == hashlib.sha256(p.encode()).hexdigest())(*login.get_credentials())
+
     def init_ui(self):
         central = QWidget()
         layout = QVBoxLayout()
-        
+
         # Header
-        header = QLabel("PCS7 TurboSift - Admin Console")
-        header.setFont(QFont('Arial', 16, QFont.Bold))
+        header = QLabel("🛠️ PCS7 TurboSift - Admin Console")
+        header.setFont(QFont('Arial', 18, QFont.Bold))
         header.setAlignment(Qt.AlignCenter)
         layout.addWidget(header)
-        
-        # Load request button
-        load_btn = QPushButton("Load User Request File")
+
+        # Load Request Button
+        load_btn = QPushButton("📂 Load User Request File")
         load_btn.clicked.connect(self.load_request)
         layout.addWidget(load_btn)
-        
-        # User info display
+
+        # Display User Info
         self.user_info = QTextEdit()
         self.user_info.setReadOnly(True)
+        self.user_info.setStyleSheet("background-color: #f0f0f0;")
         layout.addWidget(self.user_info)
-        
-        # License configuration
+
+        # License Duration
+        layout.addWidget(QLabel("🕒 License Duration (in days):"))
         self.duration = QComboBox()
         self.duration.addItems(["7", "30", "90", "180", "365"])
-        self.duration.setCurrentIndex(1)  # Default to 30 days
-        
+        layout.addWidget(self.duration)
+
+        # Feature Selection
+        layout.addWidget(QLabel("🧩 Select Features to Enable:"))
         self.features = QListWidget()
         self.features.addItems(["Tool1", "Tool2", "Tool3", "Tool4"])
         self.features.setSelectionMode(QListWidget.MultiSelection)
-        
-        # Select all features by default
         for i in range(self.features.count()):
             self.features.item(i).setSelected(True)
-        
-        # Generate license button
-        gen_btn = QPushButton("Generate License")
-        gen_btn.clicked.connect(self.generate_license)
-        
-        # Add to layout
-        layout.addWidget(QLabel("License Duration (days):"))
-        layout.addWidget(self.duration)
-        layout.addWidget(QLabel("Select Features:"))
         layout.addWidget(self.features)
+
+        # Generate Button
+        gen_btn = QPushButton("🔐 Generate License")
+        gen_btn.clicked.connect(self.generate_license)
         layout.addWidget(gen_btn)
-        
-        # License output
+
+        # License Output
+        layout.addWidget(QLabel("📄 License Output Preview:"))
         self.license_output = QTextEdit()
         self.license_output.setReadOnly(True)
+        self.license_output.setStyleSheet("background-color: #f9f9f9;")
         layout.addWidget(self.license_output)
-        
+
         central.setLayout(layout)
         self.setCentralWidget(central)
     

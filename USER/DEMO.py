@@ -16,6 +16,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QPixmap, QFont, QColor
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
+from cryptography.fernet import Fernet
+import base64
 
 from license_gate import get_machine_id
 from tools.tool1_ui import Tool1UI
@@ -93,8 +95,8 @@ class UserProfileDialog(QDialog):
         self.accept()
     
     def get_profile_data(self):
-        # Hash the password
-        salt = bcrypt.gensalt()
+        # Generate a strong salt and hash the password
+        salt = bcrypt.gensalt(rounds=12)
         hashed_pw = bcrypt.hashpw(self.password.text().encode('utf-8'), salt)
         
         return {
@@ -103,8 +105,12 @@ class UserProfileDialog(QDialog):
             "organization": self.organization.text(),
             "username": self.username.text(),
             "password_hash": hashed_pw.decode('utf-8'),
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": None,
+            "failed_attempts": 0,
+            "locked": False
         }
+
 class LicenseManagementDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -288,7 +294,90 @@ class LicenseDetailsDialog(QDialog):
         layout.addWidget(btn_box)
         self.setLayout(layout)
 
+class PasswordResetDialog(QDialog):
+    def __init__(self, username, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.setWindowTitle("Reset Password")
+        self.setWindowIcon(QIcon(resource_path("assets/lock.png")))
+        self.resize(350, 250)
         
+        layout = QVBoxLayout()
+        
+        header = QLabel(f"Reset Password for {username}")
+        header.setFont(QFont('Arial', 12, QFont.Bold))
+        layout.addWidget(header)
+        
+        form = QFormLayout()
+        
+        self.current_password = QLineEdit()
+        self.current_password.setEchoMode(QLineEdit.Password)
+        self.new_password = QLineEdit()
+        self.new_password.setEchoMode(QLineEdit.Password)
+        self.confirm_password = QLineEdit()
+        self.confirm_password.setEchoMode(QLineEdit.Password)
+        
+        form.addRow("Current Password:", self.current_password)
+        form.addRow("New Password:", self.new_password)
+        form.addRow("Confirm New Password:", self.confirm_password)
+        
+        layout.addLayout(form)
+        
+        self.show_pass = QCheckBox("Show Passwords")
+        self.show_pass.stateChanged.connect(self.toggle_password_visibility)
+        layout.addWidget(self.show_pass)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.validate_reset)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+        
+        self.setLayout(layout)
+    
+    def toggle_password_visibility(self):
+        mode = QLineEdit.Normal if self.show_pass.isChecked() else QLineEdit.Password
+        self.current_password.setEchoMode(mode)
+        self.new_password.setEchoMode(mode)
+        self.confirm_password.setEchoMode(mode)
+    
+    def validate_reset(self):
+        current = self.current_password.text()
+        new = self.new_password.text()
+        confirm = self.confirm_password.text()
+        
+        if not all([current, new, confirm]):
+            QMessageBox.warning(self, "Error", "All fields are required!")
+            return
+            
+        if new != confirm:
+            QMessageBox.warning(self, "Error", "New passwords don't match!")
+            return
+            
+        if len(new) < 8:
+            QMessageBox.warning(self, "Error", "Password must be at least 8 characters!")
+            return
+            
+        # Verify current password
+        parent = self.parent()
+        profile = parent.user_profiles.get(self.username)
+        
+        if not profile:
+            QMessageBox.warning(self, "Error", "User profile not found!")
+            return
+            
+        if not bcrypt.checkpw(current.encode('utf-8'), profile["password_hash"].encode('utf-8')):
+            QMessageBox.warning(self, "Error", "Current password is incorrect!")
+            return
+            
+        # Update password
+        salt = bcrypt.gensalt(rounds=12)
+        hashed_pw = bcrypt.hashpw(new.encode('utf-8'), salt)
+        profile["password_hash"] = hashed_pw.decode('utf-8')
+        parent.save_user_profiles()
+        
+        QMessageBox.information(self, "Success", "Password updated successfully!")
+        self.accept()
+
 class MainApp(QMainWindow):
     USER_CREDENTIALS = {
         "DEMO": "Demo@123"
@@ -394,24 +483,45 @@ class MainApp(QMainWindow):
             self.license_features = features
             self.license_expiry = expiry
 
-    # User Profile Methods
+    def generate_key(self):
+        return Fernet.generate_key()
+
+    def get_encryption_key(self):
+        # Try to load existing key or generate new one
+        key_path = os.path.join(os.path.expanduser("~"), ".pcs7_profile_key")
+        if os.path.exists(key_path):
+            with open(key_path, "rb") as f:
+                return f.read()
+        else:
+            key = self.generate_key()
+            with open(key_path, "wb") as f:
+                f.write(key)
+            return key
+
     def load_user_profiles(self):
-        """Load user profiles from encrypted storage"""
+        """Load encrypted user profiles"""
         try:
-            profiles_path = os.path.join(os.path.expanduser("~"), ".pcs7_profiles.json")
+            profiles_path = os.path.join(os.path.expanduser("~"), ".pcs7_profiles.enc")
             if os.path.exists(profiles_path):
-                with open(profiles_path, "r") as f:
-                    self.user_profiles = json.load(f)
+                cipher = Fernet(self.get_encryption_key())
+                with open(profiles_path, "rb") as f:
+                    encrypted_data = f.read()
+                    decrypted_data = cipher.decrypt(encrypted_data)
+                    self.user_profiles = json.loads(decrypted_data.decode('utf-8'))
         except Exception as e:
             print(f"Error loading profiles: {e}")
             self.user_profiles = {}
 
     def save_user_profiles(self):
-        """Save user profiles to encrypted storage"""
+        """Save user profiles with encryption"""
         try:
-            profiles_path = os.path.join(os.path.expanduser("~"), ".pcs7_profiles.json")
-            with open(profiles_path, "w") as f:
-                json.dump(self.user_profiles, f, indent=2)
+            profiles_path = os.path.join(os.path.expanduser("~"), ".pcs7_profiles.enc")
+            cipher = Fernet(self.get_encryption_key())
+            data = json.dumps(self.user_profiles).encode('utf-8')
+            encrypted_data = cipher.encrypt(data)
+            
+            with open(profiles_path, "wb") as f:
+                f.write(encrypted_data)
         except Exception as e:
             print(f"Error saving profiles: {e}")
 
@@ -435,7 +545,6 @@ class MainApp(QMainWindow):
             self.login_widget.password_input.setText("")
             self.login_widget.password_input.setFocus()
 
-    # User Info Methods
     def get_user_name(self):
         """Get the current user's name from profile"""
         if self.current_profile:
@@ -518,7 +627,6 @@ class MainApp(QMainWindow):
             QMessageBox.critical(self, "Error", 
                             f"Failed to generate license request:\n{str(e)}")
 
-    # ... (Rest of your existing methods remain exactly the same)
     def validate_license(self, license_data):
         try:
             # Verify structure
@@ -863,6 +971,12 @@ class MainApp(QMainWindow):
             header.setAlignment(Qt.AlignCenter)
             layout.addWidget(header)
 
+            forgot_pw = QLabel('<a href="#" style="color: #3498db; text-decoration: none;">Forgot Password?</a>')
+            forgot_pw.setOpenExternalLinks(False)
+            forgot_pw.linkActivated.connect(self.parent.handle_forgot_password)  # Changed to parent method
+            forgot_pw.setAlignment(Qt.AlignRight)
+            layout.addWidget(forgot_pw)
+
             self.username_input = QLineEdit()
             self.username_input.setPlaceholderText("Username")
             self.username_input.setStyleSheet("padding: 8px; border-radius: 4px;")
@@ -893,7 +1007,7 @@ class MainApp(QMainWindow):
                     background-color: #45a049;
                 }
             """)
-            self.login_btn.clicked.connect(self.handle_login)
+            self.login_btn.clicked.connect(self.parent.handle_login)  # Changed to parent method
 
             self.create_profile_btn = QPushButton("Create Profile")
             self.create_profile_btn.setStyleSheet("""
@@ -921,27 +1035,163 @@ class MainApp(QMainWindow):
             
             self.setLayout(layout)
 
-        def handle_login(self):
-            username = self.username_input.text().strip()
-            password = self.password_input.text().strip()
+    def handle_login(self):
+        # Access the input fields through the login_widget reference
+        username = self.login_widget.username_input.text().strip()
+        password = self.login_widget.password_input.text().strip()
+        
+        if not username or not password:
+            QMessageBox.warning(self, "Error", "Please enter both username and password")
+            return
             
-            # Check against stored profiles
-            if username in self.parent.user_profiles:
-                stored_hash = self.parent.user_profiles[username]["password_hash"]
-                if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
-                    self.parent.username = username
-                    self.parent.current_profile = self.parent.user_profiles[username]
-                    self.parent.logged_in = True
-                    self.parent.post_login()
-                    return
+        # Check against stored profiles
+        if username in self.user_profiles:
+            profile = self.user_profiles[username]
             
-            # Fallback to hardcoded credentials
-            if username in self.parent.USER_CREDENTIALS and self.parent.USER_CREDENTIALS[username] == password:
-                self.parent.username = username
-                self.parent.logged_in = True
-                self.parent.post_login()
+            # Check if account is locked
+            if profile.get("locked", False):
+                QMessageBox.warning(self, "Account Locked", 
+                                "This account is temporarily locked. Please try again later.")
+                return
+                
+            # Verify password
+            stored_hash = profile["password_hash"].encode('utf-8')
+            if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
+                # Successful login
+                self.username = username
+                self.current_profile = profile
+                self.logged_in = True
+                
+                # Update profile data
+                profile["last_login"] = datetime.now(timezone.utc).isoformat()
+                profile["failed_attempts"] = 0
+                self.save_user_profiles()
+                
+                self.post_login()
+                return
             else:
-                QMessageBox.warning(self, "Login Failed", "Invalid username or password.")
+                # Failed login attempt
+                profile["failed_attempts"] = profile.get("failed_attempts", 0) + 1
+                
+                # Lock account after 5 failed attempts
+                if profile["failed_attempts"] >= 5:
+                    profile["locked"] = True
+                    QMessageBox.warning(self, "Account Locked", 
+                                    "Too many failed attempts. Account locked for security.")
+                else:
+                    QMessageBox.warning(self, "Login Failed", 
+                                    f"Invalid password. {5 - profile['failed_attempts']} attempts remaining.")
+                
+                self.save_user_profiles()
+                return
+        
+        # Fallback to hardcoded credentials (demo mode)
+        if username in self.USER_CREDENTIALS and self.USER_CREDENTIALS[username] == password:
+            self.username = username
+            self.logged_in = True
+            self.post_login()
+        else:
+            QMessageBox.warning(self, "Login Failed", "Invalid username or password.")
+
+    def handle_forgot_password(self):
+        username = self.login_widget.username_input.text().strip()
+        if not username:
+            QMessageBox.warning(self, "Error", "Please enter your username first")
+            return
+            
+        if username not in self.user_profiles:
+            QMessageBox.warning(self, "Error", "Username not found in system")
+            return
+            
+        # In a real app, you would send a password reset email
+        # Here we'll just show the reset dialog directly
+        dialog = PasswordResetDialog(username, self)
+        dialog.exec_()
+
+
+class PasswordResetDialog(QDialog):
+    def __init__(self, username, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.setWindowTitle("Reset Password")
+        self.setWindowIcon(QIcon(resource_path("assets/lock.png")))
+        self.resize(350, 250)
+        
+        layout = QVBoxLayout()
+        
+        header = QLabel(f"Reset Password for {username}")
+        header.setFont(QFont('Arial', 12, QFont.Bold))
+        layout.addWidget(header)
+        
+        form = QFormLayout()
+        
+        self.current_password = QLineEdit()
+        self.current_password.setEchoMode(QLineEdit.Password)
+        self.new_password = QLineEdit()
+        self.new_password.setEchoMode(QLineEdit.Password)
+        self.confirm_password = QLineEdit()
+        self.confirm_password.setEchoMode(QLineEdit.Password)
+        
+        form.addRow("Current Password:", self.current_password)
+        form.addRow("New Password:", self.new_password)
+        form.addRow("Confirm New Password:", self.confirm_password)
+        
+        layout.addLayout(form)
+        
+        self.show_pass = QCheckBox("Show Passwords")
+        self.show_pass.stateChanged.connect(self.toggle_password_visibility)
+        layout.addWidget(self.show_pass)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.validate_reset)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+        
+        self.setLayout(layout)
+    
+    def toggle_password_visibility(self):
+        mode = QLineEdit.Normal if self.show_pass.isChecked() else QLineEdit.Password
+        self.current_password.setEchoMode(mode)
+        self.new_password.setEchoMode(mode)
+        self.confirm_password.setEchoMode(mode)
+    
+    def validate_reset(self):
+        current = self.current_password.text()
+        new = self.new_password.text()
+        confirm = self.confirm_password.text()
+        
+        if not all([current, new, confirm]):
+            QMessageBox.warning(self, "Error", "All fields are required!")
+            return
+            
+        if new != confirm:
+            QMessageBox.warning(self, "Error", "New passwords don't match!")
+            return
+            
+        if len(new) < 8:
+            QMessageBox.warning(self, "Error", "Password must be at least 8 characters!")
+            return
+            
+        # Verify current password
+        parent = self.parent()
+        profile = parent.user_profiles.get(self.username)
+        
+        if not profile:
+            QMessageBox.warning(self, "Error", "User profile not found!")
+            return
+            
+        if not bcrypt.checkpw(current.encode('utf-8'), profile["password_hash"].encode('utf-8')):
+            QMessageBox.warning(self, "Error", "Current password is incorrect!")
+            return
+            
+        # Update password
+        salt = bcrypt.gensalt(rounds=12)
+        hashed_pw = bcrypt.hashpw(new.encode('utf-8'), salt)
+        profile["password_hash"] = hashed_pw.decode('utf-8')
+        parent.save_user_profiles()
+        
+        QMessageBox.information(self, "Success", "Password updated successfully!")
+        self.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

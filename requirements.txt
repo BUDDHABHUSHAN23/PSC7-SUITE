@@ -6,3 +6,4 @@ pyarmor
 cryptography
 PyQtWebEngin
 bcrypt
+cryptography
