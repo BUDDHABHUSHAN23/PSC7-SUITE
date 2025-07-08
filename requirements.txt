@@ -5,3 +5,4 @@ xlrd>=2.0.1         # for reading older Excel .xls files (if needed)
 pyarmor
 cryptography
 PyQtWebEngin
+bcrypt
