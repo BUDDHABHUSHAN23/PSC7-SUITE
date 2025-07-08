@@ -1,112 +1,385 @@
 import sys
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
-
+import hashlib
+import bcrypt
+import platform
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout, QLineEdit,
     QPushButton, QCheckBox, QFileDialog, QMessageBox, QComboBox,
     QHBoxLayout, QStackedWidget, QTextEdit, QListWidget, QSplitter, 
-    QListWidgetItem, QAbstractItemView, QFrame, QSpacerItem, QSizePolicy
+    QListWidgetItem, QAbstractItemView, QFrame, QSpacerItem, QSizePolicy,
+    QDialog, QDialogButtonBox, QGridLayout, QFormLayout
 )
 from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QIcon, QPixmap, QFont
+from PyQt5.QtGui import QIcon, QPixmap, QFont, QColor
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtCore import QUrl
+from cryptography.fernet import Fernet
+import base64
 
-
-from license_gate import validate_license_file, get_machine_id
+from license_gate import get_machine_id
 from tools.tool1_ui import Tool1UI
 from tools.tool2_ui import Tool2UI
 from tools.tool3_ui import Tool3UI
 from tools.tool4_ui import Tool4UI
 
+from security.secure_license_system import (
+    save_encrypted_license,
+    load_encrypted_license,
+    validate_license_file,
+    delete_saved_license,
+    get_valid_license_on_start
+)
 
 def resource_path(relative_path):
     """ Get path to resource whether in development or PyInstaller bundle """
     base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
     return os.path.join(base_path, relative_path)
 
-
-class LoginWidget(QWidget):
-    def __init__(self, parent):
-        super().__init__()
-        self.parent = parent
-        self.init_ui()
-
-    def init_ui(self):
+class UserProfileDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Create User Profile")
+        self.setWindowIcon(QIcon(resource_path("assets/user.png")))
+        self.resize(400, 400)
+        
         layout = QVBoxLayout()
-        layout.setContentsMargins(40, 40, 40, 40)
-        layout.setSpacing(20)
-
-        # Header
-        header = QLabel("Welcome to Consulta Solution PCS7 Suite")
-        header.setFont(QFont('Arial', 16, QFont.Bold))
-        header.setAlignment(Qt.AlignCenter)
+        
+        header = QLabel("Create New User Profile")
+        header.setFont(QFont('Arial', 14, QFont.Bold))
         layout.addWidget(header)
-
-        # Input fields
-        self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Username")
-        self.username_input.setStyleSheet("padding: 8px; border-radius: 4px;")
         
-        self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Password")
-        self.password_input.setEchoMode(QLineEdit.Password)
-        self.password_input.setStyleSheet("padding: 8px; border-radius: 4px;")
+        form_layout = QFormLayout()
         
-        self.show_pass = QCheckBox("Show Password")
-        self.show_pass.stateChanged.connect(
-            lambda: self.password_input.setEchoMode(
-                QLineEdit.Normal if self.show_pass.isChecked() else QLineEdit.Password
-            )
-        )
+        self.full_name = QLineEdit()
+        self.email = QLineEdit()
+        self.organization = QLineEdit()
+        self.username = QLineEdit()
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.Password)
+        self.confirm_password = QLineEdit()
+        self.confirm_password.setEchoMode(QLineEdit.Password)
         
-        # Login button
-        self.login_btn = QPushButton("Login")
-        self.login_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 10px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        self.login_btn.clicked.connect(self.handle_login)
-
-        # Add widgets to layout
-        layout.addWidget(self.username_input)
-        layout.addWidget(self.password_input)
-        layout.addWidget(self.show_pass)
-        layout.addSpacing(10)
-        layout.addWidget(self.login_btn)
+        form_layout.addRow("Full Name:", self.full_name)
+        form_layout.addRow("Email:", self.email)
+        form_layout.addRow("Organization:", self.organization)
+        form_layout.addRow("Username:", self.username)
+        form_layout.addRow("Password:", self.password)
+        form_layout.addRow("Confirm Password:", self.confirm_password)
         
-        # Add vertical spacer to center the form
-        layout.addStretch(1)
+        layout.addLayout(form_layout)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.validate_inputs)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
         
         self.setLayout(layout)
+    
+    def validate_inputs(self):
+        if not all([self.full_name.text(), self.email.text(), self.username.text(), 
+                   self.password.text(), self.confirm_password.text()]):
+            QMessageBox.warning(self, "Error", "All fields are required!")
+            return
+            
+        if self.password.text() != self.confirm_password.text():
+            QMessageBox.warning(self, "Error", "Passwords don't match!")
+            return
+            
+        if len(self.password.text()) < 8:
+            QMessageBox.warning(self, "Error", "Password must be at least 8 characters!")
+            return
+            
+        self.accept()
+    
+    def get_profile_data(self):
+        # Generate a strong salt and hash the password
+        salt = bcrypt.gensalt(rounds=12)
+        hashed_pw = bcrypt.hashpw(self.password.text().encode('utf-8'), salt)
+        
+        return {
+            "full_name": self.full_name.text(),
+            "email": self.email.text(),
+            "organization": self.organization.text(),
+            "username": self.username.text(),
+            "password_hash": hashed_pw.decode('utf-8'),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": None,
+            "failed_attempts": 0,
+            "locked": False
+        }
 
-    def handle_login(self):
-        username = self.username_input.text().strip()
-        password = self.password_input.text().strip()
-        if username in self.parent.USER_CREDENTIALS and self.parent.USER_CREDENTIALS[username] == password:
-            self.parent.username = username
-            self.parent.logged_in = True
-            self.parent.post_login()
+class LicenseManagementDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("License Management")
+        self.setWindowIcon(QIcon(resource_path("assets/license.png")))
+        self.resize(500, 300)
+        
+        layout = QVBoxLayout()
+        
+        header = QLabel("License Management")
+        header.setFont(QFont('Arial', 14, QFont.Bold))
+        layout.addWidget(header)
+        
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+        
+        self.status_label = QLabel()
+        self.status_label.setFont(QFont('Arial', 10))
+        layout.addWidget(self.status_label)
+        
+        # Add Request License button
+        self.request_btn = QPushButton("Generate License Request")
+        self.request_btn.setIcon(QIcon(resource_path("assets/request.png")))
+        self.request_btn.clicked.connect(self.parent().generate_license_request)
+        
+        self.view_btn = QPushButton("View Details")
+        self.view_btn.setIcon(QIcon(resource_path("assets/info.png")))
+        self.view_btn.clicked.connect(self.view_license_details)
+        
+        self.upload_btn = QPushButton("Upload License")
+        self.upload_btn.setIcon(QIcon(resource_path("assets/upload.png")))
+        self.upload_btn.clicked.connect(self.upload_license)
+        
+        self.delete_btn = QPushButton("Remove License")
+        self.delete_btn.setIcon(QIcon(resource_path("assets/delete.png")))
+        self.delete_btn.clicked.connect(self.delete_license)
+        self.delete_btn.setStyleSheet("background-color: #e74c3c; color: white;")
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.request_btn)
+        btn_layout.addWidget(self.view_btn)
+        btn_layout.addWidget(self.upload_btn)
+        btn_layout.addWidget(self.delete_btn)
+        layout.addLayout(btn_layout)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
+        btn_box.rejected.connect(self.close)
+        layout.addWidget(btn_box)
+        
+        self.setLayout(layout)
+        self.update_status()
+    
+    def update_status(self):
+        license_data = load_encrypted_license()
+        if license_data:
+            expiry_date = license_data.get("valid_till", "N/A")
+            features = license_data.get("features", [])
+            self.status_label.setText(
+                f"Current License: {len(features)} tools enabled\n"
+                f"Valid until: {expiry_date}"
+            )
+            self.delete_btn.setEnabled(True)
+            self.view_btn.setEnabled(True)
+            self.request_btn.setEnabled(False)  # Disable request if license exists
         else:
-            QMessageBox.warning(self, "Login Failed", "Invalid username or password.")
+            self.status_label.setText("No active license found")
+            self.delete_btn.setEnabled(False)
+            self.view_btn.setEnabled(False)
+            self.request_btn.setEnabled(True)
+    
+    def view_license_details(self):
+        license_data = load_encrypted_license()
+        if license_data:
+            dialog = LicenseDetailsDialog(license_data, self)
+            dialog.exec_()
+    
+    def upload_license(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select License File", "", "JSON Files (*.json)"
+        )
+        if file_path:
+            try:
+                with open(file_path, "r") as f:
+                    license_data = json.load(f)
+                
+                valid, result = validate_license_file(license_data)
+                if not valid:
+                    QMessageBox.critical(self, "Invalid License", result)
+                    return
+                
+                reply = QMessageBox.question(
+                    self, 'Confirm License Change',
+                    'Are you sure you want to replace your current license?',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    if save_encrypted_license(license_data):
+                        QMessageBox.information(self, "Success", "License updated successfully!")
+                        self.parent().license_updated()
+                        self.update_status()
+                    else:
+                        QMessageBox.critical(self, "Error", "Failed to save license.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to process license file:\n{str(e)}")
+    
+    def delete_license(self):
+        license_data = load_encrypted_license()
+        if not license_data:
+            return
+        
+        reply = QMessageBox.question(
+            self, 'Confirm License Removal',
+            'Are you sure you want to remove your current license?\n'
+            'This will disable all premium features.',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            if delete_saved_license():
+                QMessageBox.information(self, "Success", "License removed successfully!")
+                self.parent().license_updated()
+                self.update_status()
+            else:
+                QMessageBox.critical(self, "Error", "Failed to remove license.")
 
+class LicenseDetailsDialog(QDialog):
+    def __init__(self, license_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("License Details")
+        self.setWindowIcon(QIcon(resource_path("assets/info.png")))
+        self.resize(500, 300)
+        
+        layout = QVBoxLayout()
+        
+        header = QLabel("Current License Information")
+        header.setFont(QFont('Arial', 14, QFont.Bold))
+        layout.addWidget(header)
+        
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+        
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        
+        details = [
+            ("Issued On:", license_data.get("issued_on", "N/A")),
+            ("Valid Until:", license_data.get("valid_till", "N/A")),
+            ("Enabled Features:", ", ".join(license_data.get("features", []))),
+            ("License Type:", "Full" if len(license_data.get("features", [])) == 4 else "Partial")
+        ]
+        
+        for row, (label, value) in enumerate(details):
+            lbl = QLabel(label)
+            lbl.setFont(QFont('Arial', 10, QFont.Bold))
+            val = QLabel(value)
+            val.setFont(QFont('Arial', 10))
+            grid.addWidget(lbl, row, 0)
+            grid.addWidget(val, row, 1)
+        
+        layout.addLayout(grid)
+        
+        expiry_date = license_data.get("valid_till")
+        if expiry_date:
+            try:
+                expiry = datetime.strptime(expiry_date, "%Y-%m-%d")
+                days_left = (expiry - datetime.now()).days
+                if days_left <= 7:
+                    warning = QLabel(f"⚠️ License expires in {days_left} day(s)!")
+                    warning.setStyleSheet("color: #e74c3c; font-weight: bold;")
+                    layout.addWidget(warning)
+            except ValueError:
+                pass
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
+        btn_box.rejected.connect(self.close)
+        layout.addWidget(btn_box)
+        self.setLayout(layout)
+
+class PasswordResetDialog(QDialog):
+    def __init__(self, username, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.setWindowTitle("Reset Password")
+        self.setWindowIcon(QIcon(resource_path("assets/lock.png")))
+        self.resize(350, 250)
+        
+        layout = QVBoxLayout()
+        
+        header = QLabel(f"Reset Password for {username}")
+        header.setFont(QFont('Arial', 12, QFont.Bold))
+        layout.addWidget(header)
+        
+        form = QFormLayout()
+        
+        self.current_password = QLineEdit()
+        self.current_password.setEchoMode(QLineEdit.Password)
+        self.new_password = QLineEdit()
+        self.new_password.setEchoMode(QLineEdit.Password)
+        self.confirm_password = QLineEdit()
+        self.confirm_password.setEchoMode(QLineEdit.Password)
+        
+        form.addRow("Current Password:", self.current_password)
+        form.addRow("New Password:", self.new_password)
+        form.addRow("Confirm New Password:", self.confirm_password)
+        
+        layout.addLayout(form)
+        
+        self.show_pass = QCheckBox("Show Passwords")
+        self.show_pass.stateChanged.connect(self.toggle_password_visibility)
+        layout.addWidget(self.show_pass)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.validate_reset)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+        
+        self.setLayout(layout)
+    
+    def toggle_password_visibility(self):
+        mode = QLineEdit.Normal if self.show_pass.isChecked() else QLineEdit.Password
+        self.current_password.setEchoMode(mode)
+        self.new_password.setEchoMode(mode)
+        self.confirm_password.setEchoMode(mode)
+    
+    def validate_reset(self):
+        current = self.current_password.text()
+        new = self.new_password.text()
+        confirm = self.confirm_password.text()
+        
+        if not all([current, new, confirm]):
+            QMessageBox.warning(self, "Error", "All fields are required!")
+            return
+            
+        if new != confirm:
+            QMessageBox.warning(self, "Error", "New passwords don't match!")
+            return
+            
+        if len(new) < 8:
+            QMessageBox.warning(self, "Error", "Password must be at least 8 characters!")
+            return
+            
+        # Verify current password
+        parent = self.parent()
+        profile = parent.user_profiles.get(self.username)
+        
+        if not profile:
+            QMessageBox.warning(self, "Error", "User profile not found!")
+            return
+            
+        if not bcrypt.checkpw(current.encode('utf-8'), profile["password_hash"].encode('utf-8')):
+            QMessageBox.warning(self, "Error", "Current password is incorrect!")
+            return
+            
+        # Update password
+        salt = bcrypt.gensalt(rounds=12)
+        hashed_pw = bcrypt.hashpw(new.encode('utf-8'), salt)
+        profile["password_hash"] = hashed_pw.decode('utf-8')
+        parent.save_user_profiles()
+        
+        QMessageBox.information(self, "Success", "Password updated successfully!")
+        self.accept()
 
 class MainApp(QMainWindow):
     USER_CREDENTIALS = {
-        "CONSULTA": "Consulta@123",
         "DEMO": "Demo@123"
     }
 
@@ -114,12 +387,7 @@ class MainApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("PCS7 TurboSift")
         self.setGeometry(100, 100, 1200, 800)
-        
-        # Set window icon
         self.setWindowIcon(QIcon(resource_path("assets/LOGO.ico")))
-
-        
-        # Set style
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f5f5f5;
@@ -160,23 +428,24 @@ class MainApp(QMainWindow):
             }
         """)
 
+        # Initialize user profile system
+        self.user_profiles = {}
+        self.current_profile = None
+        self.load_user_profiles()
+        
         self.username = ""
         self.logged_in = False
         self.license_valid = False
         self.license_features = []
         self.license_expiry = ""
-
         self.tool_widgets = {}
 
-        # Main stacked widget
         self.stack = QStackedWidget()
         
-        # Sidebar
         self.sidebar = QListWidget()
         self.sidebar.setFixedWidth(220)
         self.sidebar.setIconSize(QSize(24, 24))
         
-        # Add sidebar items with icons
         items = [
             ("Home", "assets/home.png"),
             ("Tool1", "assets/tool1.png"),
@@ -193,7 +462,6 @@ class MainApp(QMainWindow):
         
         self.sidebar.currentItemChanged.connect(self.handle_sidebar_selection)
 
-        # Splitter for sidebar and main content
         self.splitter = QSplitter()
         self.splitter.addWidget(self.sidebar)
         self.splitter.addWidget(self.stack)
@@ -203,150 +471,225 @@ class MainApp(QMainWindow):
         
         self.setCentralWidget(self.splitter)
 
-        # Login widget
-        self.login_widget = LoginWidget(self)
+        self.login_widget = self.LoginWidget(self)
         self.stack.addWidget(self.login_widget)
         self.stack.setCurrentWidget(self.login_widget)
 
-    # Animation methods
-    def animated_set_current_widget(self, widget):
-        """Smooth fade out current widget, then fade in the new one."""
-        current_widget = self.stack.currentWidget()
-        if current_widget is widget:
-            return
+        self.update_sidebar_access()
 
-        # Fade out animation for current widget
-        self.fade_out = QPropertyAnimation(current_widget, b"windowOpacity")
-        self.fade_out.setDuration(300)
-        self.fade_out.setStartValue(1)
-        self.fade_out.setEndValue(0)
-        self.fade_out.setEasingCurve(QEasingCurve.InOutQuad)
-        
-        # When fade out finishes, switch widget and fade in new widget
-        self.fade_out.finished.connect(lambda: self._fade_in_new_widget(widget))
-        
-        self.fade_out.start()
+        license_data, valid, features, expiry = get_valid_license_on_start()
+        if valid:
+            self.license_valid = True
+            self.license_features = features
+            self.license_expiry = expiry
 
-    def _fade_in_new_widget(self, widget):
-        self.stack.setCurrentWidget(widget)
-        widget.setWindowOpacity(0)
-        
-        self.fade_in = QPropertyAnimation(widget, b"windowOpacity")
-        self.fade_in.setDuration(300)
-        self.fade_in.setStartValue(0)
-        self.fade_in.setEndValue(1)
-        self.fade_in.setEasingCurve(QEasingCurve.InOutQuad)
-        self.fade_in.start()
+    def generate_key(self):
+        return Fernet.generate_key()
+
+    def get_encryption_key(self):
+        # Try to load existing key or generate new one
+        key_path = os.path.join(os.path.expanduser("~"), ".pcs7_profile_key")
+        if os.path.exists(key_path):
+            with open(key_path, "rb") as f:
+                return f.read()
+        else:
+            key = self.generate_key()
+            with open(key_path, "wb") as f:
+                f.write(key)
+            return key
+
+    def load_user_profiles(self):
+        """Load encrypted user profiles"""
+        try:
+            profiles_path = os.path.join(os.path.expanduser("~"), ".pcs7_profiles.enc")
+            if os.path.exists(profiles_path):
+                cipher = Fernet(self.get_encryption_key())
+                with open(profiles_path, "rb") as f:
+                    encrypted_data = f.read()
+                    decrypted_data = cipher.decrypt(encrypted_data)
+                    self.user_profiles = json.loads(decrypted_data.decode('utf-8'))
+        except Exception as e:
+            print(f"Error loading profiles: {e}")
+            self.user_profiles = {}
+
+    def save_user_profiles(self):
+        """Save user profiles with encryption"""
+        try:
+            profiles_path = os.path.join(os.path.expanduser("~"), ".pcs7_profiles.enc")
+            cipher = Fernet(self.get_encryption_key())
+            data = json.dumps(self.user_profiles).encode('utf-8')
+            encrypted_data = cipher.encrypt(data)
+            
+            with open(profiles_path, "wb") as f:
+                f.write(encrypted_data)
+        except Exception as e:
+            print(f"Error saving profiles: {e}")
+
+    def create_user_profile(self):
+        """Show dialog to create new user profile"""
+        dialog = UserProfileDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            profile_data = dialog.get_profile_data()
+            username = profile_data["username"]
+            
+            if username in self.user_profiles:
+                QMessageBox.warning(self, "Error", "Username already exists!")
+                return
+                
+            self.user_profiles[username] = profile_data
+            self.save_user_profiles()
+            QMessageBox.information(self, "Success", "Profile created successfully!")
+            
+            # Auto-fill login form
+            self.login_widget.username_input.setText(username)
+            self.login_widget.password_input.setText("")
+            self.login_widget.password_input.setFocus()
+
+    def get_user_name(self):
+        """Get the current user's name from profile"""
+        if self.current_profile:
+            return self.current_profile.get("full_name", self.username)
+        return self.username or "Unknown User"
+
+    def get_user_email(self):
+        """Get the current user's email from profile"""
+        if self.current_profile:
+            return self.current_profile.get("email", f"{self.username}@example.com")
+        return f"{self.username}@example.com" if self.username else "unknown@example.com"
+
+    def get_organization(self):
+        """Get the user's organization from profile"""
+        if self.current_profile:
+            return self.current_profile.get("organization", "Demo Organization")
+        return "Demo Organization"
+
+    def get_os_info(self):
+        """Get operating system information"""
+        return f"{platform.system()} {platform.release()}"
+
+    def get_cpu_id(self):
+        """Get CPU identifier (placeholder implementation)"""
+        return "CPU-UNKNOWN"
+
+    def sign_request(self, request_data):
+        """Create a signature for the license request (placeholder implementation)"""
+        data_str = json.dumps(request_data, sort_keys=True).encode('utf-8')
+        return hashlib.sha256(data_str).hexdigest()
+
+    def generate_license_request(self):
+        try:
+            request_data = {
+                "version": "1.0",
+                "metadata": {
+                    "request_id": f"REQ-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                    "request_date": datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+                    "software_version": "PCS7-2.5.0"
+                },
+                "requester": {
+                    "name": self.get_user_name(),
+                    "email": self.get_user_email(),
+                    "organization": self.get_organization()
+                },
+                "system": {
+                    "machine_id": get_machine_id(),
+                    "os_type": self.get_os_info(),
+                    "cpu_id": self.get_cpu_id()
+                },
+                "request": {
+                    "requested_features": [
+                        {"id": "tool1", "name": "Tool1", "version": "1.2"},
+                        {"id": "tool2", "name": "Tool2", "version": "2.1"},
+                        {"id": "tool3", "name": "Tool3", "version": "3.0"},
+                        {"id": "tool4", "name": "Tool4", "version": "1.5"}
+                    ],
+                    "requested_duration_days": 30,
+                    "purpose": "Production use"
+                }
+            }
+            
+            request_data["signature"] = {
+                "algorithm": "SHA256",
+                "value": self.sign_request(request_data)
+            }
+            
+            # Create requests directory if not exists
+            os.makedirs("license_requests", exist_ok=True)
+            save_path = os.path.join("license_requests", 
+                                f"license_request_{request_data['metadata']['request_id']}.json")
+            
+            with open(save_path, 'w') as f:
+                json.dump(request_data, f, indent=2)
+                
+            QMessageBox.information(self, "Success", 
+                                f"License request generated:\n{save_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", 
+                            f"Failed to generate license request:\n{str(e)}")
+
+    def validate_license(self, license_data):
+        try:
+            # Verify structure
+            required_sections = ['version', 'metadata', 'licensee', 'system', 'license', 'signature']
+            for section in required_sections:
+                if section not in license_data:
+                    return False, "Invalid license structure", [], ""
+            
+            # Verify signature (placeholder - implement proper verification)
+            if not self.verify_signature(license_data):
+                return False, "Invalid signature", [], ""
+            
+            # Check machine binding
+            if license_data['system']['machine_id'] != get_machine_id():
+                return False, "License not valid for this machine", [], ""
+            
+            # Check expiration
+            end_date = datetime.fromisoformat(license_data['license']['validity']['end_date'].replace('Z', ''))
+            if datetime.now() > end_date:
+                return False, "License expired", [], ""
+            
+            # Extract features
+            features = [f['id'] for f in license_data['license']['features']]
+            expiry = end_date.strftime("%Y-%m-%d")
+            
+            return True, "Valid license", features, expiry
+            
+        except Exception as e:
+            return False, f"Validation error: {str(e)}", [], ""
+            
+    def verify_signature(self, license_data):
+        """Placeholder - implement proper signature verification"""
+        try:
+            # In a real implementation, you would:
+            # 1. Extract the signature
+            # 2. Verify using your public key
+            # 3. Return True/False based on verification
+            
+            # For now, just check signature exists
+            return "signature" in license_data and bool(license_data["signature"].get("value"))
+        except:
+            return False
 
     def post_login(self):
-        if self.username == "CONSULTA":
-            self.show_admin_panel()
-        else:
-            self.show_license_panel()
-
-    def show_admin_panel(self):
-        self.admin_panel = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(30, 20, 30, 20)
-        layout.setSpacing(20)
-
-        # Header
-        header = QLabel(f"👋 Welcome {self.username} (Admin)")
-        header.setFont(QFont('Arial', 16, QFont.Bold))
-        layout.addWidget(header)
+        self.license_updated()
+        self.update_sidebar_access()
+        self.show_license_panel()
+    
+    def license_updated(self):
+        license_data, valid, features, expiry = get_valid_license_on_start()
+        self.license_valid = valid
+        self.license_features = features
+        self.license_expiry = expiry
         
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep)
-
-        # License configuration
-        config_group = QWidget()
-        config_layout = QVBoxLayout()
-        config_layout.setSpacing(15)
-        
-        # Expiry selection
-        expiry_label = QLabel("📅 License Duration (Days)")
-        expiry_label.setFont(QFont('Arial', 10, QFont.Bold))
-        self.expiry_combo = QComboBox()
-        self.expiry_combo.addItems(["30", "90", "180", "365"])
-        self.expiry_combo.setCurrentIndex(3)
-        config_layout.addWidget(expiry_label)
-        config_layout.addWidget(self.expiry_combo)
-
-        # Tools selection
-        tools_label = QLabel("⚙️ Select Tools to Enable")
-        tools_label.setFont(QFont('Arial', 10, QFont.Bold))
-        self.tools_list = QListWidget()
-        self.tools_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        for tool in ["Tool1", "Tool2", "Tool3", "Tool4"]:
-            item = QListWidgetItem(tool)
-            item.setCheckState(Qt.Checked)
-            self.tools_list.addItem(item)
-        config_layout.addWidget(tools_label)
-        config_layout.addWidget(self.tools_list)
-        
-        config_group.setLayout(config_layout)
-        layout.addWidget(config_group)
-
-        # Output area
-        output_label = QLabel("Generated License:")
-        output_label.setFont(QFont('Arial', 10, QFont.Bold))
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setMinimumHeight(150)
-        layout.addWidget(output_label)
-        layout.addWidget(self.output)
-
-        # Generate button
-        gen_btn = QPushButton("Generate License")
-        gen_btn.setStyleSheet("background-color: #27ae60;")
-        gen_btn.clicked.connect(self.generate_license)
-        layout.addWidget(gen_btn, alignment=Qt.AlignRight)
-
-        self.admin_panel.setLayout(layout)
-        self.stack.addWidget(self.admin_panel)
-        self.animated_set_current_widget(self.admin_panel)
-
-    def show_user_manual_panel(self):
-            pdf_path = resource_path("assets/user_manual.pdf")
-            if os.path.exists(pdf_path):
-                import webbrowser
-                webbrowser.open(pdf_path)
+        if hasattr(self, 'statusBar'):
+            self.statusBar().clearMessage()
+            if valid:
+                self.statusBar().showMessage(
+                    f"License valid until: {expiry} | "
+                    f"Enabled tools: {', '.join(features)}"
+                )
             else:
-                QMessageBox.critical(self, "Error", "User manual PDF not found.")
-
-
-
-    def generate_license(self):
-        try:
-            selected_tools = []
-            for i in range(self.tools_list.count()):
-                if self.tools_list.item(i).checkState() == Qt.Checked:
-                    selected_tools.append(self.tools_list.item(i).text())
-            
-            selected_days = int(self.expiry_combo.currentText())
-
-            license_payload = {
-                "machine_id": get_machine_id(),
-                "issued_on": str(datetime.now()),
-                "valid_till": (datetime.now() + timedelta(days=selected_days)).strftime("%Y-%m-%d"),
-                "features": selected_tools
-            }
-
-            json_data = json.dumps(license_payload, indent=4)
-            self.output.setPlainText(json_data)
-
-            save_path, _ = QFileDialog.getSaveFileName(
-                self, "Save License File", "activation_key.json", "JSON Files (*.json)"
-            )
-            if save_path:
-                with open(save_path, "w") as f:
-                    f.write(json_data)
-                QMessageBox.information(self, "Saved", "License file saved successfully!")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
+                self.statusBar().showMessage("⚠️ No valid license found")
 
     def show_license_panel(self):
         self.license_panel = QWidget()
@@ -354,13 +697,27 @@ class MainApp(QMainWindow):
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
 
-        # Welcome message
         welcome = QLabel(f"👋 Welcome {self.username}")
         welcome.setFont(QFont('Arial', 16, QFont.Bold))
         layout.addWidget(welcome)
 
+        license_btn = QPushButton("Manage License")
+        license_btn.setIcon(QIcon(resource_path("assets/license.png")))
+        license_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 8px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+        """)
+        license_btn.clicked.connect(self.show_license_management)
+        layout.addWidget(license_btn, alignment=Qt.AlignLeft)
+
         if not self.license_valid:
-            # License upload section
             upload_frame = QFrame()
             upload_frame.setFrameShape(QFrame.StyledPanel)
             upload_frame.setStyleSheet("background-color: white; padding: 20px; border-radius: 5px;")
@@ -371,7 +728,7 @@ class MainApp(QMainWindow):
             upload_layout.addWidget(upload_label, alignment=Qt.AlignCenter)
             
             btn = QPushButton("Upload License File")
-            btn.setFixedSize(200, 40)  # Make it visible enough
+            btn.setFixedSize(200, 40)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: #3498db;
@@ -384,13 +741,12 @@ class MainApp(QMainWindow):
                     background-color: #2980b9;
                 }
             """)
-            btn.clicked.connect(self.upload_license)
+            btn.clicked.connect(self.show_license_management)
             upload_layout.addWidget(btn, alignment=Qt.AlignCenter)
             
             upload_frame.setLayout(upload_layout)
             layout.addWidget(upload_frame)
         else:
-            # License info section
             info_frame = QFrame()
             info_frame.setFrameShape(QFrame.StyledPanel)
             info_frame.setStyleSheet("background-color: #e8f4f8; padding: 15px; border-radius: 5px;")
@@ -404,41 +760,32 @@ class MainApp(QMainWindow):
             expiry.setFont(QFont('Arial', 11))
             info_layout.addWidget(expiry)
             
+            features = QLabel(f"Enabled Tools: {', '.join(self.license_features)}")
+            features.setFont(QFont('Arial', 11))
+            info_layout.addWidget(features)
+            
             info_frame.setLayout(info_layout)
             layout.addWidget(info_frame)
             
-            # Show available tools
             self.show_tool_buttons(layout)
 
-        # Add logo and footer
         self.add_logo_and_footer(layout)
 
         self.license_panel.setLayout(layout)
         self.stack.addWidget(self.license_panel)
         self.animated_set_current_widget(self.license_panel)
+    
+    def show_license_management(self):
+        dialog = LicenseManagementDialog(self)
+        dialog.exec_()
 
-    def upload_license(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Select License File", 
-            "", 
-            "JSON Files (*.json)"
-        )
-        if file_path:
-            try:
-                with open(file_path, "r") as f:
-                    license_data = json.load(f)
-                valid, result = validate_license_file(license_data)
-                if valid:
-                    self.license_valid = True
-                    self.license_features = result["features"]
-                    self.license_expiry = result["valid_till"]
-                    QMessageBox.information(self, "Success", "License validated successfully!")
-                    self.show_license_panel()
-                else:
-                    QMessageBox.critical(self, "Error", f"License validation failed:\n{result}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to read license file:\n{str(e)}")
+    def show_user_manual_panel(self):
+        pdf_path = resource_path("assets/user_manual.pdf")
+        if os.path.exists(pdf_path):
+            import webbrowser
+            webbrowser.open(pdf_path)
+        else:
+            QMessageBox.critical(self, "Error", "User manual PDF not found.")
 
     def show_tool_buttons(self, layout):
         tool_map = {
@@ -452,13 +799,11 @@ class MainApp(QMainWindow):
         tools_label.setFont(QFont('Arial', 14, QFont.Bold))
         layout.addWidget(tools_label)
         
-        # Add horizontal line separator
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep)
 
-        # Tools grid
         tools_grid = QWidget()
         grid_layout = QHBoxLayout()
         grid_layout.setSpacing(20)
@@ -512,6 +857,16 @@ class MainApp(QMainWindow):
 
         self.animated_set_current_widget(self.tool_widgets[tool_name])
 
+    def update_sidebar_access(self):
+        for i in range(self.sidebar.count()):
+            item = self.sidebar.item(i)
+            if not self.logged_in:
+                if item.text() in ["Home", "Logout"]:
+                    item.setFlags(item.flags() | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                else:
+                    item.setFlags(item.flags() & ~(Qt.ItemIsEnabled | Qt.ItemIsSelectable))
+            else:
+                item.setFlags(item.flags() | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
 
     def handle_sidebar_selection(self, item):
         if not item:
@@ -520,15 +875,11 @@ class MainApp(QMainWindow):
         text = item.text()
         if text == "Home":
             if self.logged_in:
-                if self.username == "CONSULTA":
-                    self.animated_set_current_widget(self.admin_panel)
-                else:
-                    self.animated_set_current_widget(self.license_panel)
+                self.animated_set_current_widget(self.license_panel)
             else:
                 self.animated_set_current_widget(self.login_widget)  
         elif text == "Logout":
             self.logout()
-
         elif text in ["Tool1", "Tool2", "Tool3", "Tool4"]:
             if self.license_valid and text in self.license_features:
                 if text not in self.tool_widgets or self.tool_widgets[text] is None:
@@ -545,10 +896,8 @@ class MainApp(QMainWindow):
                 self.animated_set_current_widget(self.tool_widgets[text])
             else:
                 QMessageBox.warning(self, "Access Denied", f"You do not have access to {text} or your license has expired.")
-
         elif text == "User Manual":
-                self.show_user_manual_panel()
-
+            self.show_user_manual_panel()
 
     def logout(self):
         reply = QMessageBox.question(
@@ -557,23 +906,22 @@ class MainApp(QMainWindow):
         )
         
         if reply == QMessageBox.Yes:
-                self.logged_in = False
-                self.license_valid = False
-                self.username = ""
-                self.animated_set_current_widget(self.login_widget)
+            self.logged_in = False
+            self.license_valid = False
+            self.username = ""
+            self.tool_widgets.clear()
+            self.animated_set_current_widget(self.login_widget)
+            self.update_sidebar_access()
 
     def add_logo_and_footer(self, layout):
-        # Add vertical spacer to push content up
         layout.addStretch(1)
         
-        # Add logo
         logo = QLabel()
         logo_pix = QPixmap(resource_path("assets/consulta_logo.png")).scaledToHeight(60, Qt.SmoothTransformation)
         logo.setPixmap(logo_pix)
         logo.setAlignment(Qt.AlignCenter)
         layout.addWidget(logo)
 
-        # Footer with copyright
         footer = QLabel(
             '<a href="https://www.consulta.in/" style="color: #7f8c8d; text-decoration: none;">© 2025 Consulta. All Rights Reserved.</a>'
         )
@@ -582,15 +930,272 @@ class MainApp(QMainWindow):
         footer.setFont(QFont('Arial', 9))
         layout.addWidget(footer)
 
+    def animated_set_current_widget(self, widget):
+        current_widget = self.stack.currentWidget()
+        if current_widget is widget:
+            return
+
+        self.fade_out = QPropertyAnimation(current_widget, b"windowOpacity")
+        self.fade_out.setDuration(300)
+        self.fade_out.setStartValue(1)
+        self.fade_out.setEndValue(0)
+        self.fade_out.setEasingCurve(QEasingCurve.InOutQuad)
+        
+        self.fade_out.finished.connect(lambda: self._fade_in_new_widget(widget))
+        self.fade_out.start()
+
+    def _fade_in_new_widget(self, widget):
+        self.stack.setCurrentWidget(widget)
+        widget.setWindowOpacity(0)
+        
+        self.fade_in = QPropertyAnimation(widget, b"windowOpacity")
+        self.fade_in.setDuration(300)
+        self.fade_in.setStartValue(0)
+        self.fade_in.setEndValue(1)
+        self.fade_in.setEasingCurve(QEasingCurve.InOutQuad)
+        self.fade_in.start()
+
+    class LoginWidget(QWidget):
+        def __init__(self, parent):
+            super().__init__()
+            self.parent = parent
+            self.init_ui()
+
+        def init_ui(self):
+            layout = QVBoxLayout()
+            layout.setContentsMargins(40, 40, 40, 40)
+            layout.setSpacing(20)
+
+            header = QLabel("Welcome to PCS7 TurboSift")
+            header.setFont(QFont('Arial', 16, QFont.Bold))
+            header.setAlignment(Qt.AlignCenter)
+            layout.addWidget(header)
+
+            forgot_pw = QLabel('<a href="#" style="color: #3498db; text-decoration: none;">Forgot Password?</a>')
+            forgot_pw.setOpenExternalLinks(False)
+            forgot_pw.linkActivated.connect(self.parent.handle_forgot_password)  # Changed to parent method
+            forgot_pw.setAlignment(Qt.AlignRight)
+            layout.addWidget(forgot_pw)
+
+            self.username_input = QLineEdit()
+            self.username_input.setPlaceholderText("Username")
+            self.username_input.setStyleSheet("padding: 8px; border-radius: 4px;")
+            
+            self.password_input = QLineEdit()
+            self.password_input.setPlaceholderText("Password")
+            self.password_input.setEchoMode(QLineEdit.Password)
+            self.password_input.setStyleSheet("padding: 8px; border-radius: 4px;")
+            
+            self.show_pass = QCheckBox("Show Password")
+            self.show_pass.stateChanged.connect(
+                lambda: self.password_input.setEchoMode(
+                    QLineEdit.Normal if self.show_pass.isChecked() else QLineEdit.Password
+                )
+            )
+            
+            self.login_btn = QPushButton("Login")
+            self.login_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #4CAF50;
+                    color: white;
+                    border: none;
+                    padding: 10px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #45a049;
+                }
+            """)
+            self.login_btn.clicked.connect(self.parent.handle_login)  # Changed to parent method
+
+            self.create_profile_btn = QPushButton("Create Profile")
+            self.create_profile_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #f39c12;
+                    color: white;
+                    border: none;
+                    padding: 10px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #e67e22;
+                }
+            """)
+            self.create_profile_btn.clicked.connect(self.parent.create_user_profile)
+            
+            layout.addWidget(self.username_input)
+            layout.addWidget(self.password_input)
+            layout.addWidget(self.show_pass)
+            layout.addSpacing(10)
+            layout.addWidget(self.login_btn)
+            layout.addWidget(self.create_profile_btn)
+            layout.addStretch(1)
+            
+            self.setLayout(layout)
+
+    def handle_login(self):
+        # Access the input fields through the login_widget reference
+        username = self.login_widget.username_input.text().strip()
+        password = self.login_widget.password_input.text().strip()
+        
+        if not username or not password:
+            QMessageBox.warning(self, "Error", "Please enter both username and password")
+            return
+            
+        # Check against stored profiles
+        if username in self.user_profiles:
+            profile = self.user_profiles[username]
+            
+            # Check if account is locked
+            if profile.get("locked", False):
+                QMessageBox.warning(self, "Account Locked", 
+                                "This account is temporarily locked. Please try again later.")
+                return
+                
+            # Verify password
+            stored_hash = profile["password_hash"].encode('utf-8')
+            if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
+                # Successful login
+                self.username = username
+                self.current_profile = profile
+                self.logged_in = True
+                
+                # Update profile data
+                profile["last_login"] = datetime.now(timezone.utc).isoformat()
+                profile["failed_attempts"] = 0
+                self.save_user_profiles()
+                
+                self.post_login()
+                return
+            else:
+                # Failed login attempt
+                profile["failed_attempts"] = profile.get("failed_attempts", 0) + 1
+                
+                # Lock account after 5 failed attempts
+                if profile["failed_attempts"] >= 5:
+                    profile["locked"] = True
+                    QMessageBox.warning(self, "Account Locked", 
+                                    "Too many failed attempts. Account locked for security.")
+                else:
+                    QMessageBox.warning(self, "Login Failed", 
+                                    f"Invalid password. {5 - profile['failed_attempts']} attempts remaining.")
+                
+                self.save_user_profiles()
+                return
+        
+        # Fallback to hardcoded credentials (demo mode)
+        if username in self.USER_CREDENTIALS and self.USER_CREDENTIALS[username] == password:
+            self.username = username
+            self.logged_in = True
+            self.post_login()
+        else:
+            QMessageBox.warning(self, "Login Failed", "Invalid username or password.")
+
+    def handle_forgot_password(self):
+        username = self.login_widget.username_input.text().strip()
+        if not username:
+            QMessageBox.warning(self, "Error", "Please enter your username first")
+            return
+            
+        if username not in self.user_profiles:
+            QMessageBox.warning(self, "Error", "Username not found in system")
+            return
+            
+        # In a real app, you would send a password reset email
+        # Here we'll just show the reset dialog directly
+        dialog = PasswordResetDialog(username, self)
+        dialog.exec_()
+
+
+class PasswordResetDialog(QDialog):
+    def __init__(self, username, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.setWindowTitle("Reset Password")
+        self.setWindowIcon(QIcon(resource_path("assets/lock.png")))
+        self.resize(350, 250)
+        
+        layout = QVBoxLayout()
+        
+        header = QLabel(f"Reset Password for {username}")
+        header.setFont(QFont('Arial', 12, QFont.Bold))
+        layout.addWidget(header)
+        
+        form = QFormLayout()
+        
+        self.current_password = QLineEdit()
+        self.current_password.setEchoMode(QLineEdit.Password)
+        self.new_password = QLineEdit()
+        self.new_password.setEchoMode(QLineEdit.Password)
+        self.confirm_password = QLineEdit()
+        self.confirm_password.setEchoMode(QLineEdit.Password)
+        
+        form.addRow("Current Password:", self.current_password)
+        form.addRow("New Password:", self.new_password)
+        form.addRow("Confirm New Password:", self.confirm_password)
+        
+        layout.addLayout(form)
+        
+        self.show_pass = QCheckBox("Show Passwords")
+        self.show_pass.stateChanged.connect(self.toggle_password_visibility)
+        layout.addWidget(self.show_pass)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.validate_reset)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+        
+        self.setLayout(layout)
+    
+    def toggle_password_visibility(self):
+        mode = QLineEdit.Normal if self.show_pass.isChecked() else QLineEdit.Password
+        self.current_password.setEchoMode(mode)
+        self.new_password.setEchoMode(mode)
+        self.confirm_password.setEchoMode(mode)
+    
+    def validate_reset(self):
+        current = self.current_password.text()
+        new = self.new_password.text()
+        confirm = self.confirm_password.text()
+        
+        if not all([current, new, confirm]):
+            QMessageBox.warning(self, "Error", "All fields are required!")
+            return
+            
+        if new != confirm:
+            QMessageBox.warning(self, "Error", "New passwords don't match!")
+            return
+            
+        if len(new) < 8:
+            QMessageBox.warning(self, "Error", "Password must be at least 8 characters!")
+            return
+            
+        # Verify current password
+        parent = self.parent()
+        profile = parent.user_profiles.get(self.username)
+        
+        if not profile:
+            QMessageBox.warning(self, "Error", "User profile not found!")
+            return
+            
+        if not bcrypt.checkpw(current.encode('utf-8'), profile["password_hash"].encode('utf-8')):
+            QMessageBox.warning(self, "Error", "Current password is incorrect!")
+            return
+            
+        # Update password
+        salt = bcrypt.gensalt(rounds=12)
+        hashed_pw = bcrypt.hashpw(new.encode('utf-8'), salt)
+        profile["password_hash"] = hashed_pw.decode('utf-8')
+        parent.save_user_profiles()
+        
+        QMessageBox.information(self, "Success", "Password updated successfully!")
+        self.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # Set application style
     app.setStyle('Fusion')
-    
-    # Create and show main window
     win = MainApp()
     win.show()
-    
     sys.exit(app.exec_())
