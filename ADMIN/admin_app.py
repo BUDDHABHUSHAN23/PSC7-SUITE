@@ -8,6 +8,12 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QLabel,
                             QDialog, QDialogButtonBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QIcon
+import os
+
+def resource_path(relative_path):
+    """ Get path to resource whether in development or PyInstaller bundle """
+    base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+    return os.path.join(base_path, relative_path)
 
 class LoginDialog(QDialog):
     def __init__(self, parent=None):

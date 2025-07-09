@@ -612,20 +612,33 @@ class MainApp(QMainWindow):
                 "value": self.sign_request(request_data)
             }
             
-            # Create requests directory if not exists
-            os.makedirs("license_requests", exist_ok=True)
-            save_path = os.path.join("license_requests", 
-                                f"license_request_{request_data['metadata']['request_id']}.json")
+            # Let user choose save location
+            options = QFileDialog.Options()
+            default_filename = f"license_request_{request_data['metadata']['request_id']}.json"
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "Save License Request", 
+                default_filename,  # Default filename
+                "JSON Files (*.json);;All Files (*)",  # File filters
+                options=options
+            )
             
-            with open(save_path, 'w') as f:
-                json.dump(request_data, f, indent=2)
+            if save_path:  # User didn't cancel the dialog
+                with open(save_path, 'w') as f:
+                    json.dump(request_data, f, indent=2)
+                    
+                QMessageBox.information(
+                    self, 
+                    "Success", 
+                    f"License request saved to:\n{save_path}"
+                )
                 
-            QMessageBox.information(self, "Success", 
-                                f"License request generated:\n{save_path}")
-            
         except Exception as e:
-            QMessageBox.critical(self, "Error", 
-                            f"Failed to generate license request:\n{str(e)}")
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Failed to generate license request:\n{str(e)}"
+            )
 
     def validate_license(self, license_data):
         try:
